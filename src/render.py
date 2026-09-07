@@ -1,0 +1,169 @@
+r"""Write the table shape out as text, and read it back.
+
+(Raw docstring — this one documents backslash escapes, and \N is a unicode-name
+escape in a normal Python string.)
+
+Writer and reader live in one file on purpose. They are inverses, and two
+inverses in separate files drift apart — someone fixes an escaping bug on one
+side and the other silently disagrees. Here they are edited in the same diff.
+
+The format, `#margin/v1`:
+
+    #margin/v1
+    #const{"state": "open", "locked": false, "reactions.laugh": 0}
+    [30]{number:int,title:str,body:str,draft:bool?}
+    37537,"[compiler] Preserve JSX pragmas","## Summary...",false
+    37534,"[DevTools Bug]: Inspect button",\N,
+
+Why CSV rather than something cleverer: models have seen an enormous amount of
+CSV in training, and Python's csv module already solves quoting correctly. An
+invented format would need both the model and us to learn its escaping.
+
+Cell encoding, and why each case exists:
+
+    key absent in this row   ->  (empty)     the row genuinely lacked the key
+    None                     ->  \N          borrowed from Postgres COPY/MySQL
+    "" (empty string)        ->  \E          so it cannot be read back as absent
+    True / False             ->  true/false
+    int / float              ->  str(value)
+    list / dict              ->  compact JSON
+    string starting with \   ->  one extra leading backslash
+
+Absent and null must not collapse into the same cell: after boilerplate
+stripping a PR carries pull_request={"merged_at": None} while a plain issue has
+no pull_request key at all, and Q4/Q10 tell them apart by exactly that.
+"""
+
+import csv
+import io
+import json
+
+from table import MISSING
+
+FORMAT_MARKER = "#margin/v1"
+CONST_PREFIX = "#const"
+
+NULL_CELL = "\\N"
+EMPTY_STRING_CELL = "\\E"
+
+
+def render(table):
+    """Turn the table shape into the `#margin/v1` document."""
+    lines = [FORMAT_MARKER]
+
+    if table["constants"]:
+        lines.append(CONST_PREFIX + json.dumps(table["constants"], separators=(",", ":")))
+
+    header_cols = ",".join(
+        f"{c['name']}:{c['type']}{'?' if c['nullable'] else ''}"
+        for c in table["columns"]
+    )
+    lines.append(f"[{table['count']}]{{{header_cols}}}")
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    for row in table["cells"]:
+        writer.writerow([encode_cell(value) for value in row])
+
+    return "\n".join(lines) + "\n" + buffer.getvalue()
+
+
+def parse(text):
+    """Read a `#margin/v1` document back into the table shape."""
+    lines = text.split("\n")
+    if not lines or lines[0] != FORMAT_MARKER:
+        raise ValueError(f"not a {FORMAT_MARKER} document")
+
+    index = 1
+    constants = {}
+    if index < len(lines) and lines[index].startswith(CONST_PREFIX):
+        constants = json.loads(lines[index][len(CONST_PREFIX):])
+        index += 1
+
+    count, columns = parse_header(lines[index])
+    index += 1
+
+    # The remaining lines are CSV. Hand them back to the csv module whole rather
+    # than line by line: a quoted cell may legally contain newlines, so "one
+    # line" and "one row" are not the same thing.
+    csv_text = "\n".join(lines[index:])
+    cells = []
+    for row in csv.reader(io.StringIO(csv_text)):
+        if not row:
+            continue  # trailing newline at end of document
+        cells.append([
+            decode_cell(value, column["type"])
+            for value, column in zip(row, columns)
+        ])
+
+    return {
+        "count": count,
+        "columns": columns,
+        "cells": cells,
+        "constants": constants,
+        "array_path": [],
+    }
+
+
+def parse_header(line):
+    """`[30]{number:int,title:str?}` -> (30, [{name, type, nullable}, ...])."""
+    close_bracket = line.index("]")
+    count = int(line[1:close_bracket])
+
+    inner = line[line.index("{") + 1:line.rindex("}")]
+    columns = []
+    for spec in inner.split(","):
+        name, type_name = spec.rsplit(":", 1)
+        nullable = type_name.endswith("?")
+        columns.append({
+            "name": name,
+            "type": type_name.rstrip("?"),
+            "nullable": nullable,
+        })
+    return count, columns
+
+
+def encode_cell(value):
+    """One JSON value -> the text that goes in a CSV cell."""
+    if value is MISSING:
+        return ""
+    if value is None:
+        return NULL_CELL
+    if isinstance(value, bool):
+        # Checked before int: in Python, True is an int.
+        return "true" if value else "false"
+    if isinstance(value, str):
+        if value == "":
+            return EMPTY_STRING_CELL
+        if value.startswith("\\"):
+            return "\\" + value
+        return value
+    if isinstance(value, (int, float)):
+        return str(value)
+    return json.dumps(value, separators=(",", ":"))
+
+
+def decode_cell(text, type_name):
+    """Inverse of encode_cell. Decodes by the column's declared type.
+
+    Never guess the type from the text — "3.0" and "3" would round-trip to the
+    wrong Python type, and "true" could be a string that happens to say true.
+    """
+    if text == "":
+        return MISSING
+    if text == NULL_CELL:
+        return None
+    if text == EMPTY_STRING_CELL:
+        return ""
+
+    if type_name == "str":
+        if text.startswith("\\\\"):
+            return text[1:]
+        return text
+    if type_name == "bool":
+        return text == "true"
+    if type_name == "int":
+        return int(text)
+    if type_name == "float":
+        return float(text)
+    return json.loads(text)

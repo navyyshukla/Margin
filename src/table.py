@@ -152,3 +152,95 @@ def remove_constants(flat_rows, constants):
 def restore_constants(flat_rows, constants):
     """Inverse of remove_constants: put every constant back into every row."""
     return [{**row, **constants} for row in flat_rows]
+
+
+def build_table(rows, array_path=()):
+    """Rows of JSON objects -> the table shape that src/render.py writes out.
+
+    The schema is the UNION of every row's keys, not the intersection. A key
+    present in one row out of thirty still earns a column, marked nullable;
+    rows without it carry MISSING in that cell. Intersection would silently
+    delete the odd row's data, which is the opposite of the point.
+    """
+    flat_rows = [flatten_row(row) for row in rows]
+    constants = constant_columns(flat_rows)
+    varying_rows = remove_constants(flat_rows, constants)
+
+    column_names = _ordered_column_names(varying_rows)
+
+    columns = []
+    for name in column_names:
+        values = [row[name] for row in varying_rows if name in row]
+        columns.append({
+            "name": name,
+            "type": column_type_name(values),
+            "nullable": (
+                len(values) < len(varying_rows)
+                or any(value is None for value in values)
+            ),
+        })
+
+    cells = [
+        [row.get(name, MISSING) for name in column_names]
+        for row in varying_rows
+    ]
+
+    return {
+        "count": len(rows),
+        "columns": columns,
+        "cells": cells,
+        "constants": constants,
+        "array_path": list(array_path),
+    }
+
+
+def rebuild_rows(table):
+    """Inverse of build_table: the table shape back into the original objects."""
+    names = [column["name"] for column in table["columns"]]
+
+    varying_rows = [
+        {
+            name: value
+            for name, value in zip(names, row)
+            if value is not MISSING
+        }
+        for row in table["cells"]
+    ]
+
+    flat_rows = restore_constants(varying_rows, table["constants"])
+    return [unflatten_row(row) for row in flat_rows]
+
+
+def _ordered_column_names(rows):
+    """Most common columns first, ties broken alphabetically.
+
+    Order is deterministic so the same payload always renders identically —
+    an unstable column order would change the text (and any prompt cache built
+    on it) for no reason.
+    """
+    counts = {}
+    for row in rows:
+        for name in row:
+            counts[name] = counts.get(name, 0) + 1
+    return sorted(counts, key=lambda name: (-counts[name], name))
+
+
+def column_type_name(values):
+    """The type tag for a column, from the values actually present in it.
+
+    bool is checked before int because Python makes bool a subclass of int, so
+    an unguarded isinstance(True, int) would tag a boolean column as int and
+    decode it back as 1.
+    """
+    present = [value for value in values if value is not None]
+    if not present:
+        return "null"
+    if all(isinstance(value, bool) for value in present):
+        return "bool"
+    if all(isinstance(value, int) and not isinstance(value, bool) for value in present):
+        return "int"
+    if all(isinstance(value, float) for value in present):
+        return "float"
+    if all(isinstance(value, str) for value in present):
+        return "str"
+    return "json"
