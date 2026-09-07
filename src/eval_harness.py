@@ -25,7 +25,8 @@ Usage: python src/eval_harness.py data/samples/github_issues.json
 import json
 import sys
 
-from compress import strip_boilerplate
+from compress import compress_json, strip_boilerplate
+from decompress import decompress
 from detect import detect_content_type
 
 
@@ -128,15 +129,76 @@ def safe_answer(check, data):
         return None, f"{type(exc).__name__}: {exc}"
 
 
+def describe_difference(expected, actual, limit=5):
+    """Point at the first few places two payloads disagree.
+
+    Dumping two 30-issue payloads side by side is unreadable at exactly the
+    moment you most need to read it, so name the paths instead.
+    """
+    differences = []
+
+    def walk(a, b, path):
+        if len(differences) >= limit:
+            return
+        if isinstance(a, dict) and isinstance(b, dict):
+            for key in sorted(set(a) | set(b)):
+                if key not in a:
+                    differences.append(f"{path}.{key}: only after round-trip")
+                elif key not in b:
+                    differences.append(f"{path}.{key}: lost in round-trip")
+                else:
+                    walk(a[key], b[key], f"{path}.{key}")
+        elif isinstance(a, list) and isinstance(b, list):
+            if len(a) != len(b):
+                differences.append(f"{path}: {len(a)} items before, {len(b)} after")
+                return
+            for index, (x, y) in enumerate(zip(a, b)):
+                walk(x, y, f"{path}[{index}]")
+        elif a != b or type(a) is not type(b):
+            differences.append(f"{path}: {a!r} -> {b!r}")
+
+    walk(expected, actual, "root")
+    return differences[:limit] or ["(no field-level difference found — check ordering or types)"]
+
+
 def run(data):
-    """Compare answers on the raw payload vs the compressed one.
+    """Compare answers on the raw payload vs the round-tripped compressed one.
+
+    Checks run against decompress(compress(data)), not against the compressed
+    text itself. That is what lets every question keep talking about
+    data["user"]["login"] while the format underneath changes freely — and it
+    tests the decompressor at the same time.
 
     Returns the number of failures.
     """
-    compressed = strip_boilerplate(data)
+    text, notes = compress_json(data)
+    compressed = decompress(text)
+    stripped = strip_boilerplate(data)
     failures = 0
 
-    print("PRESERVE — answer must be identical after compression")
+    print("ROUND-TRIP — compression must be exactly reversible")
+    if compressed == stripped:
+        print("  PASS  decompress(compress(x)) == strip_boilerplate(x)")
+    else:
+        failures += 1
+        print("  FAIL  decompress(compress(x)) != strip_boilerplate(x)")
+        for line in describe_difference(stripped, compressed):
+            print(f"        {line}")
+
+    print("\nNOTES — a silent fallback would fake a green run")
+    if not notes:
+        print("  PASS  table shipped, no fallback")
+    for note in notes:
+        # A round-trip failure inside compress_json degrades safely to JSON —
+        # which means every answer check below would still pass. Without this,
+        # a broken format ships looking perfectly healthy.
+        if "ROUND-TRIP MISMATCH" in note:
+            failures += 1
+            print(f"  FAIL  {note}")
+        else:
+            print(f"  ----  {note}")
+
+    print("\nPRESERVE — answer must be identical after compression")
     for label, check in PRESERVE_CHECKS:
         expected, raw_error = safe_answer(check, data)
         actual, compressed_error = safe_answer(check, compressed)

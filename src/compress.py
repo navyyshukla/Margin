@@ -20,7 +20,12 @@ Usage: python src/compress.py data/samples/some_response.json > compressed.json
 import json
 import sys
 
+import tiktoken
+
+import render
+from decompress import decompress
 from detect import detect_content_type
+from table import build_table, find_record_array
 
 NOISE_KEYS = {"node_id", "gravatar_id"}
 
@@ -72,19 +77,81 @@ def uses_url_template_convention(data):
     return False
 
 
+MIN_ROWS_TO_TABULATE = 2
+# Measured 2026-09-07 on github_issues.json: the table format's fixed cost is
+# one header line, so it starts paying at the first repeated row. Below this a
+# table cannot win and is not worth attempting.
+
+MIN_TABLE_SAVING = 0.10
+# Measured 2026-09-07: the table saves 24.5% over stripped JSON on
+# github_issues.json. Gated well below that so a differently-shaped payload
+# still gets the win, while a payload where the table barely helps falls back
+# to JSON rather than paying the risk of a second format for nothing.
+# Deliberately NOT Headroom's 0.30 — that would reject our own best result.
+
+
+def compress_json(data):
+    """Full pipeline. Returns (text, notes).
+
+    notes explains any fallback to plain JSON. It is not decoration: if a bug
+    makes the table unusable and we silently emit JSON instead, every eval
+    question still passes — the answers are all still there — and a broken
+    format would ship looking green. The harness fails on a round-trip note for
+    exactly that reason.
+    """
+    stripped = strip_boilerplate(data)
+    as_json = json.dumps(stripped)
+
+    rows, array_path = find_record_array(stripped)
+    if rows is None:
+        return as_json, ["no record array found — nothing to tabulate"]
+    if len(rows) < MIN_ROWS_TO_TABULATE:
+        return as_json, [f"only {len(rows)} row(s) — below MIN_ROWS_TO_TABULATE"]
+
+    wrapper = {}
+    if array_path:
+        wrapper = {k: v for k, v in stripped.items() if k != array_path[0]}
+
+    text = render.render(build_table(rows, array_path, wrapper))
+
+    # Don't reason about whether the inverse is correct — run it. A transform we
+    # cannot undo is a transform we don't ship.
+    if decompress(text) != stripped:
+        return as_json, ["ROUND-TRIP MISMATCH — fell back to JSON"]
+
+    saving = 1 - token_count(text) / token_count(as_json)
+    if saving < MIN_TABLE_SAVING:
+        return as_json, [f"table saved only {saving:.1%} — below MIN_TABLE_SAVING"]
+
+    return text, []
+
+
+def token_count(text):
+    """Tokens under cl100k_base — the unit every threshold here is measured in."""
+    global _ENCODING
+    if _ENCODING is None:
+        _ENCODING = tiktoken.get_encoding("cl100k_base")
+    return len(_ENCODING.encode(text))
+
+
+_ENCODING = None  # loaded once, lazily: get_encoding is slow to call repeatedly
+
+
 def main():
     if len(sys.argv) != 2:
         print("usage: python src/compress.py <path-to-json-file>", file=sys.stderr)
         sys.exit(1)
 
-    with open(sys.argv[1]) as f:
+    with open(sys.argv[1], encoding="utf-8") as f:
         raw_text = f.read()
 
     content_type, data = detect_content_type(raw_text)
 
     if content_type == "json":
-        compressed = strip_boilerplate(data)
-        print(json.dumps(compressed))
+        text, notes = compress_json(data)
+        for note in notes:
+            print(f"note: {note}", file=sys.stderr)
+        sys.stdout.write(text if text.endswith("\n") else text + "\n")
     else:
         # No plain_text compression rule exists yet (nothing built it needs to
         # justify studying/writing one — see CLAUDE.md's "study just in time").

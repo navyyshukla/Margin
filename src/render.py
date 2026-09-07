@@ -42,6 +42,8 @@ from table import MISSING
 
 FORMAT_MARKER = "#margin/v1"
 CONST_PREFIX = "#const"
+PATH_PREFIX = "#path"
+WRAP_PREFIX = "#wrap"
 
 NULL_CELL = "\\N"
 EMPTY_STRING_CELL = "\\E"
@@ -50,6 +52,13 @@ EMPTY_STRING_CELL = "\\E"
 def render(table):
     """Turn the table shape into the `#margin/v1` document."""
     lines = [FORMAT_MARKER]
+
+    # Only written when the records were nested under a key, which keeps the
+    # common bare-array case one line shorter.
+    if table["array_path"]:
+        lines.append(PATH_PREFIX + json.dumps(table["array_path"], separators=(",", ":")))
+    if table.get("wrapper"):
+        lines.append(WRAP_PREFIX + json.dumps(table["wrapper"], separators=(",", ":")))
 
     if table["constants"]:
         lines.append(CONST_PREFIX + json.dumps(table["constants"], separators=(",", ":")))
@@ -75,6 +84,16 @@ def parse(text):
         raise ValueError(f"not a {FORMAT_MARKER} document")
 
     index = 1
+    array_path = []
+    if index < len(lines) and lines[index].startswith(PATH_PREFIX):
+        array_path = json.loads(lines[index][len(PATH_PREFIX):])
+        index += 1
+
+    wrapper = {}
+    if index < len(lines) and lines[index].startswith(WRAP_PREFIX):
+        wrapper = json.loads(lines[index][len(WRAP_PREFIX):])
+        index += 1
+
     constants = {}
     if index < len(lines) and lines[index].startswith(CONST_PREFIX):
         constants = json.loads(lines[index][len(CONST_PREFIX):])
@@ -101,7 +120,8 @@ def parse(text):
         "columns": columns,
         "cells": cells,
         "constants": constants,
-        "array_path": [],
+        "array_path": array_path,
+        "wrapper": wrapper,
     }
 
 

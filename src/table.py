@@ -154,7 +154,7 @@ def restore_constants(flat_rows, constants):
     return [{**row, **constants} for row in flat_rows]
 
 
-def build_table(rows, array_path=()):
+def build_table(rows, array_path=(), wrapper=None):
     """Rows of JSON objects -> the table shape that src/render.py writes out.
 
     The schema is the UNION of every row's keys, not the intersection. A key
@@ -191,6 +191,11 @@ def build_table(rows, array_path=()):
         "cells": cells,
         "constants": constants,
         "array_path": list(array_path),
+        # Whatever else sat beside the records in the wrapper object. An API
+        # that returns {"hits": [...], "nbHits": 431, "page": 0} keeps its
+        # metadata; dropping it would lose data the round-trip claims to
+        # preserve.
+        "wrapper": wrapper or {},
     }
 
 
