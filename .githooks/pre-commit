@@ -26,18 +26,23 @@ staged_src=$(git diff --cached --name-only --diff-filter=ACM | grep '^src/.*\.py
 
 repo_root=$(git rev-parse --show-toplevel)
 PYTHON="$repo_root/.venv/bin/python"
-SAMPLE="$repo_root/data/samples/github_issues.json"
+SAMPLES=(
+  "$repo_root/data/samples/github_issues.json"
+  "$repo_root/data/samples/hn_stories.json"
+)
 
 # The sample is gitignored and the venv is local, so a fresh checkout has
 # neither. Missing inputs are not a regression — say so and allow the commit.
 [ -x "$PYTHON" ] || { echo "pre-commit: eval harness skipped (no .venv)"; exit 0; }
-[ -f "$SAMPLE" ] || { echo "pre-commit: eval harness skipped (no sample payload)"; exit 0; }
 
-echo "pre-commit: running eval harness..."
-if ! "$PYTHON" "$repo_root/src/eval_harness.py" "$SAMPLE"; then
-  echo "" >&2
-  echo "pre-commit: eval harness failed — commit refused." >&2
-  echo "  A compression rule changed the answers. Fix the rule, or update" >&2
-  echo "  data/eval_questions.md if the question itself was wrong." >&2
-  exit 1
-fi
+for sample in "${SAMPLES[@]}"; do
+  [ -f "$sample" ] || continue
+  echo "pre-commit: running eval harness on $(basename "$sample")..."
+  if ! "$PYTHON" "$repo_root/src/eval_harness.py" "$sample"; then
+    echo "" >&2
+    echo "pre-commit: eval harness failed on $(basename "$sample") — commit refused." >&2
+    echo "  A compression rule changed the answers, or broke the round-trip." >&2
+    echo "  Fix the rule, or update the questions if a question was wrong." >&2
+    exit 1
+  fi
+done

@@ -53,3 +53,45 @@ can quietly break the others.
 For each question: paste the payload (full, then compressed) into a fresh conversation, ask the
 question, compare the answer to the ground truth above. A rule "passes" only if all of 1–12 stay
 correct after compression. Question 13 exists to catch hallucination, not to be answered.
+
+---
+
+# Eval questions — hn_stories.json
+
+Second payload: 30 top stories from HackerNews via Algolia
+(`https://hn.algolia.com/api/v1/search?tags=story&hitsPerPage=30`), fetched 2026-09-07.
+
+This one exists to answer a different question from the GitHub set. That set asks "does
+compression preserve answers?"; this set asks **"do the rules generalize, or were they quietly
+shaped around GitHub?"** So the questions deliberately lean on how this API differs:
+
+- records live under `hits`, not at the top level
+- `url` is the story itself, not a link template — the case that would break a name-based rule
+- `_tags` is an array of plain scalars, a shape GitHub never produced
+- one story has no `url` at all (a real null, not an absent key)
+- the wrapper object carries its own metadata (`nbHits`, `page`) beside the records
+
+Executable form: `src/checks_hn.py`. Run with
+`python src/eval_harness.py data/samples/hn_stories.json`.
+
+## Preserve (answer must be identical after a compress/decompress round-trip)
+1. Title of the top-scoring story → `Stephen Hawking has died` (6,015 points)
+2. Author of story `16582136` → `Cogito`
+3. **url of story `16582136`** → `http://www.bbc.com/news/uk-43396008` — the one that must survive
+4. Story count → 30
+5. Total points across all stories → 120,745
+6. Total comments across all stories → 38,947
+7. Distinct authors → 28 (`davidbarker` and `grey-area` appear twice each)
+8. Stories with no url → `37392676` only
+9. Most-discussed story → `CrowdStrike Update: Windows Bluescreen and Boot Loops` (3,859 comments)
+10. `_tags` of story `16582136` → `["story", "author_Cogito", "story_16582136"]`
+11. Wrapper metadata survives → `nbHits`, `hitsPerPage`, `page` all intact
+
+## Removed
+None. `strip_boilerplate` finds no `*_url` keys anywhere in this payload, so it removes nothing
+at all — which is correct behaviour, not an oversight. A REMOVED check here would have to invent
+something to delete.
+
+## Manual (needs a human or an LLM)
+12. Summarize what the top 3 stories are about
+13. Which stories are about AI companies, and what happened in each

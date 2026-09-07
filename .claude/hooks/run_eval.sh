@@ -12,8 +12,14 @@
 set -uo pipefail
 
 PROJECT_DIR="/Users/navyshukla/Margin Project"
-SAMPLE="$PROJECT_DIR/data/samples/github_issues.json"
 PYTHON="$PROJECT_DIR/.venv/bin/python"
+
+# Every sample with a check module. A hook that only guarded one payload would
+# miss a regression in the other, which is the whole reason a second one exists.
+SAMPLES=(
+  "$PROJECT_DIR/data/samples/github_issues.json"
+  "$PROJECT_DIR/data/samples/hn_stories.json"
+)
 
 file_path=$(jq -r '.tool_input.file_path // .tool_response.filePath // empty')
 
@@ -26,16 +32,21 @@ esac
 # The sample payload is gitignored, and the venv is local — if either is
 # missing this is a fresh checkout, not a regression. Say so, don't fail.
 [ -x "$PYTHON" ] || { echo "eval harness skipped: no .venv (run: uv venv .venv)"; exit 0; }
-[ -f "$SAMPLE" ] || { echo "eval harness skipped: no data/samples/github_issues.json"; exit 0; }
 
-output=$("$PYTHON" "$PROJECT_DIR/src/eval_harness.py" "$SAMPLE" 2>&1)
-status=$?
+ran=0
+for sample in "${SAMPLES[@]}"; do
+  # Samples are gitignored real API payloads, so a fresh checkout has none.
+  # Missing is not a regression.
+  [ -f "$sample" ] || continue
+  ran=$((ran + 1))
 
-if [ $status -eq 0 ]; then
-  echo "eval harness: all checks pass"
-  exit 0
-fi
+  if ! output=$("$PYTHON" "$PROJECT_DIR/src/eval_harness.py" "$sample" 2>&1); then
+    echo "eval harness FAILED on $(basename "$sample") after editing $file_path" >&2
+    echo "$output" >&2
+    exit 2
+  fi
+done
 
-echo "eval harness FAILED after editing $file_path" >&2
-echo "$output" >&2
-exit 2
+[ "$ran" -gt 0 ] || { echo "eval harness skipped: no sample payloads present"; exit 0; }
+echo "eval harness: all checks pass on $ran sample(s)"
+exit 0
