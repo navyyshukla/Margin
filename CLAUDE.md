@@ -43,6 +43,19 @@ an earlier session (linked from project memory / prior chat — not duplicated h
 Doesn't exist yet. Add a doc file the first time there's a real, non-obvious decision to record
 (e.g. a tuned threshold, a format-detection edge case) — not before.
 
+## Harness (enforced, not just documented)
+Run `./.githooks/install.sh` once per clone — it copies the hooks into `.git/hooks`. Don't set
+`core.hooksPath` to `.githooks`: hooks are working-tree files, so on a branch that predates them
+(like `main`) the file is absent and nothing runs — which defeats the hook whose job is guarding
+`main`. Re-run `install.sh` after editing a hook.
+
+- **`.githooks/pre-commit`** — refuses commits on `main` outright; refuses any commit staging
+  `src/*.py` while `src/eval_harness.py` fails. Both skip cleanly when `.venv` or the gitignored
+  sample payload is missing (a fresh checkout has neither; that's not a regression).
+- **`.claude/hooks/run_eval.sh`** (wired in `.claude/settings.json`) — runs the eval harness after
+  any Claude edit to `src/*.py` and exits 2 on failure, so a regression surfaces mid-session.
+
 ## Open TODOs (harness-level, not feature-level)
-- [ ] Add a PR-review gate on merges from `development` → `main` once there's enough code to make
-      review meaningful (see study plan Part D — this was deliberately deferred, not forgotten)
+- [ ] Add a PR-review gate on merges from `development` → `main`. The pre-commit hook now blocks
+      direct commits to `main`, so the remaining piece is the review step itself: open a PR and run
+      `/code-review` on it before merging, once a feature is tested and solid.
