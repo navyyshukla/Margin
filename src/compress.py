@@ -112,11 +112,22 @@ def compress_json(data):
     if array_path:
         wrapper = {k: v for k, v in stripped.items() if k != array_path[0]}
 
-    text = render.render(build_table(rows, array_path, wrapper))
-
     # Don't reason about whether the inverse is correct — run it. A transform we
     # cannot undo is a transform we don't ship.
-    if decompress(text) != stripped:
+    #
+    # Rendering or re-reading can also raise outright: a key containing a comma
+    # or a newline collides with the header's own syntax, since the header is
+    # one line of comma-separated column specs. Catching that here rather than
+    # forbidding such keys keeps one rule — "if the table cannot be proved
+    # correct, emit JSON" — instead of two, and means an unanticipated payload
+    # degrades to plain JSON rather than crashing the compressor.
+    try:
+        text = render.render(build_table(rows, array_path, wrapper))
+        restored = decompress(text)
+    except Exception as exc:
+        return as_json, [f"table render/parse failed ({type(exc).__name__}: {exc})"]
+
+    if restored != stripped:
         return as_json, ["ROUND-TRIP MISMATCH — fell back to JSON"]
 
     saving = 1 - token_count(text) / token_count(as_json)
