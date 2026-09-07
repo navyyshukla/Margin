@@ -1,9 +1,18 @@
 """Strip structural boilerplate from a JSON payload without touching content.
 
-Rule: drop any key ending in "_url", plus "url", "node_id", and "gravatar_id" — GitHub
-API fields that are link templates / opaque IDs, never needed to answer a question about
-the content. Measured 38% token reduction on data/samples/github_issues.json with zero
-answer-quality loss on data/eval_questions.md (checked manually, 2026-09-07).
+Rules: drop any key ending in "_url", plus "node_id" and "gravatar_id" — link
+templates and opaque IDs that no question about the content ever needs. A bare
+"url" key is dropped only when the same object also carries "*_url" siblings,
+because that pattern marks it as one more link template; on its own, "url" is
+usually the record's actual subject (see _has_url_template_siblings).
+
+Measured 38% token reduction on data/samples/github_issues.json with zero
+answer-quality loss on data/eval_questions.md (2026-09-07).
+
+This stage is deliberately LOSSY: the dropped fields are the product, not an
+accident, and nothing restores them. Every later stage is exactly reversible.
+That boundary is what round-trip verification is measured against — see
+src/table.py.
 
 Usage: python src/compress.py data/samples/some_response.json > compressed.json
 """
@@ -13,20 +22,40 @@ import sys
 
 from detect import detect_content_type
 
-NOISE_KEYS = {"node_id", "gravatar_id", "url"}
+NOISE_KEYS = {"node_id", "gravatar_id"}
 
 
 def strip_boilerplate(data):
     """Recursively drop link-template and opaque-ID keys from dicts/lists."""
     if isinstance(data, dict):
+        drop_bare_url = _has_url_template_siblings(data)
         return {
             k: strip_boilerplate(v)
             for k, v in data.items()
-            if not k.endswith("_url") and k not in NOISE_KEYS
+            if not k.endswith("_url")
+            and k not in NOISE_KEYS
+            and not (k == "url" and drop_bare_url)
         }
     if isinstance(data, list):
         return [strip_boilerplate(v) for v in data]
     return data
+
+
+def _has_url_template_siblings(obj):
+    """Does this object carry GitHub-style "*_url" link templates?
+
+    Decides whether a bare "url" key on THIS object is boilerplate or content.
+    GitHub hangs a whole family of link templates off every object
+    (comments_url, events_url, labels_url, ...), and the bare "url" is just one
+    more of them. But plenty of APIs use "url" for the thing the record is
+    actually about — a HackerNews story's url IS the story — and deleting that
+    would throw away the answer, not the noise.
+
+    Keying off the sibling pattern rather than the name means the rule is about
+    structure, which travels to APIs we have not seen. Judging by name alone
+    does not.
+    """
+    return any(k.endswith("_url") for k in obj)
 
 
 def main():
