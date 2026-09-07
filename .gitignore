@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+*.db
+*.sqlite3
+
+# sample data may contain real API responses from services you use —
+# keep it local by default; un-ignore individual files you're sure are safe to share
+data/samples/*
+!data/samples/.gitkeep
