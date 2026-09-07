@@ -1,4 +1,6 @@
-# context-compressor
+# Margin
+
+*the room your context earns back*
 
 A personal, from-scratch project inspired by [Headroom](https://github.com/headroomlabs-ai/headroom):
 a small tool that shrinks the JSON API responses I paste into LLM conversations, without breaking

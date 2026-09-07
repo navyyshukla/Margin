@@ -1,4 +1,4 @@
-# context-compressor
+# Margin
 
 ## What this is
 A personal tool that compresses JSON API responses before they go into an LLM prompt, without
