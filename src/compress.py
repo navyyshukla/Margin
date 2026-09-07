@@ -11,6 +11,8 @@ Usage: python src/compress.py data/samples/some_response.json > compressed.json
 import json
 import sys
 
+from detect import detect_content_type
+
 NOISE_KEYS = {"node_id", "gravatar_id", "url"}
 
 
@@ -33,10 +35,21 @@ def main():
         sys.exit(1)
 
     with open(sys.argv[1]) as f:
-        data = json.load(f)
+        raw_text = f.read()
 
-    compressed = strip_boilerplate(data)
-    print(json.dumps(compressed))
+    content_type, data = detect_content_type(raw_text)
+
+    if content_type == "json":
+        compressed = strip_boilerplate(data)
+        print(json.dumps(compressed))
+    else:
+        # No plain_text compression rule exists yet (nothing built it needs to
+        # justify studying/writing one — see CLAUDE.md's "study just in time").
+        # Pass it through unchanged rather than mangling content we don't
+        # understand yet. sys.stdout.write, not print: print() would append a
+        # newline the input never had, so the "unchanged" path wouldn't be
+        # byte-for-byte unchanged.
+        sys.stdout.write(raw_text)
 
 
 if __name__ == "__main__":
