@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Two gates, both enforced rather than documented:
+#
+#   1. No direct commits to main. Work happens on development; main only
+#      receives reviewed merges. A rule in CLAUDE.md is a rule anyone (me or
+#      Claude) can read past — this one cannot be read past.
+#   2. The eval harness must pass when src/*.py is staged. A compression rule
+#      that changes answers should not be committable in the first place.
+#
+# Bypass with `git commit --no-verify` if you ever genuinely need to; that
+# should feel like a deliberate act, which is the point.
+
+set -uo pipefail
+
+branch=$(git rev-parse --abbrev-ref HEAD)
+if [ "$branch" = "main" ]; then
+  echo "pre-commit: refusing to commit directly to main." >&2
+  echo "  Work on development; main takes reviewed merges only." >&2
+  echo "  git switch development" >&2
+  exit 1
+fi
+
+# Only run the harness when compression/eval code actually changed.
+staged_src=$(git diff --cached --name-only --diff-filter=ACM | grep '^src/.*\.py$' || true)
+[ -n "$staged_src" ] || exit 0
+
+repo_root=$(git rev-parse --show-toplevel)
+PYTHON="$repo_root/.venv/bin/python"
+SAMPLE="$repo_root/data/samples/github_issues.json"
+
+# The sample is gitignored and the venv is local, so a fresh checkout has
+# neither. Missing inputs are not a regression — say so and allow the commit.
+[ -x "$PYTHON" ] || { echo "pre-commit: eval harness skipped (no .venv)"; exit 0; }
+[ -f "$SAMPLE" ] || { echo "pre-commit: eval harness skipped (no sample payload)"; exit 0; }
+
+echo "pre-commit: running eval harness..."
+if ! "$PYTHON" "$repo_root/src/eval_harness.py" "$SAMPLE"; then
+  echo "" >&2
+  echo "pre-commit: eval harness failed — commit refused." >&2
+  echo "  A compression rule changed the answers. Fix the rule, or update" >&2
+  echo "  data/eval_questions.md if the question itself was wrong." >&2
+  exit 1
+fi
