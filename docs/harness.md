@@ -99,9 +99,21 @@ Two specific traps found this way:
 
 - **Quote figures against the raw file, not `json.dumps`.** `json.dumps` adds
   `", "` and `": "` that were never on disk. HN's "18.6% saving" was measured
-  against `json.dumps` output; against the actual file it was **0.3%**. The
-  gate must keep using `json.dumps` — that is what it would emit instead — but
-  anything said to a human uses the raw file.
+  against `json.dumps` output; against the actual file it was **0.3%**.
+
+  This rule first read: "the gate must keep using `json.dumps` — that is what it
+  would emit instead — but anything said to a human uses the raw file." **That
+  conclusion was wrong, and leaving it written down cost a real bug.** The
+  padding was not a measurement artefact to compensate for in reports; it was
+  in the output. Three of the six payloads added the next day came back *larger*
+  than they went in — Open-Meteo by 19%, exchange rates by 25% — because the
+  fallback emitted padded JSON. The fix was compact separators everywhere, which
+  corrected the output and the denominator at once.
+
+  The general lesson, which is why this stays: **when a measurement looks wrong,
+  check whether the thing being measured is wrong before writing a caveat about
+  how to read the number.** A caveat is how a bug gets documented instead of
+  fixed.
 - **A fixed seed, always.** A gate that fails one commit in twenty gets
   bypassed, and a bypassed gate is not a gate. Hunt for new bugs by passing a
   different seed explicitly.
