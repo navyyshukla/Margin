@@ -50,10 +50,23 @@ Run `./.githooks/install.sh` once per clone — it copies the hooks into `.git/h
 `main`. Re-run `install.sh` after editing a hook.
 
 - **`.githooks/pre-commit`** — refuses commits on `main` outright; refuses any commit staging
-  `src/*.py` while `src/eval_harness.py` fails. Both skip cleanly when `.venv` or the gitignored
-  sample payload is missing (a fresh checkout has neither; that's not a regression).
-- **`.claude/hooks/run_eval.sh`** (wired in `.claude/settings.json`) — runs the eval harness after
-  any Claude edit to `src/*.py` and exits 2 on failure, so a regression surfaces mid-session.
+  `src/*.py` while `src/property_test.py` or `src/eval_harness.py` fails. The harness skips
+  cleanly when `.venv` or the gitignored sample payload is missing (a fresh checkout has neither;
+  that's not a regression); the property test generates its own payloads, so it always runs.
+- **`.claude/hooks/run_eval.sh`** (wired in `.claude/settings.json`) — runs both after any Claude
+  edit to `src/*.py` and exits 2 on failure, so a regression surfaces mid-session.
+
+**`docs/harness.md` is the rulebook — read it before changing the format.** Six rules, each
+recorded with the failure that bought it. The two that catch people repeatedly:
+
+- A test of the format must assert the format was *used*. `compress_json` falls back to plain JSON
+  when its own round-trip fails, so a completely broken encoder still passes a naive round-trip
+  check. Both tests were worthless until they checked the notes.
+- Round-trip equality cannot see a lie in the *header*. What the document claims to the reader
+  needs a check aimed at the claim, not at the data.
+
+Re-run the cold read (`docs/cold-read-2026-09-08.md`) whenever a **new cell encoding** is added —
+that is precisely what a reader cannot infer and no automated gate can see.
 
 ## Open TODOs (harness-level, not feature-level)
 - [ ] Add a PR-review gate on merges from `development` → `main`. The pre-commit hook now blocks
