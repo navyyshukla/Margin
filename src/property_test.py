@@ -266,6 +266,15 @@ MUST_TABULATE = [
     {"users": [{"a": i, "b": "u" * 20} for i in range(8)], "posts": [{"c": 1}, {"c": 2}]},
     {"small": [{"z": 1}, {"z": 2}],                # must tabulate `big`, not `small`
      "big": [{"a": i, "b": "q" * 20} for i in range(10)]},
+    # Record maps, 2026-09-08: a dict of like objects is a table whose first
+    # column is the dict key. coingecko_prices.json went 0% -> 32.1% on this.
+    {f"coin{i}": {"usd": i * 1.5, "eur": i * 1.3, "cap": i * 1000, "vol": i * 7}
+     for i in range(8)},
+    {"rates": {f"c{i}": {"buy": i * 1.1, "sell": i * 1.2, "mid": i * 1.15}
+               for i in range(9)}, "base": "USD"},
+    # A record whose own keys collide with the default key column name, so the
+    # chosen name has to dodge them.
+    {f"k{i}": {"_key": i, "_key2": i, "v": "x" * 12} for i in range(8)},
 ]
 
 MAY_DEGRADE = [
@@ -278,6 +287,15 @@ MAY_DEGRADE = [
     [{"a": {"b": {}}}, {"a": {"b": {}}}],          # empty dict flattens to no columns
     [{"a": {"b": {"c": 1}}}, {"i": 2}],            # absent nested parent
     [{"a": 5, "a.b": 6}, {"a": 7, "a.b": 8}],      # same key as value and parent
+    # A dict of dynamic keys whose values are bare scalars is NOT a record map:
+    # each record is one number, so there is no repeated key name to factor out
+    # and a two-column key/value table costs more than the JSON it replaces.
+    # Measured on exchangerates_usd.json: -1.3%. This is the line _is_record_map
+    # holds, and the case that proves it holds it.
+    {"rates": {f"c{i}": i * 1.5 for i in range(60)}, "base": "USD"},
+    # Ragged objects under dynamic keys — a dict of unrelated things, not a
+    # table. Tabulating it would give a wide sparse mess.
+    {"a": {"x": 1}, "b": {"y": 2, "z": 3}, "c": {"w": 4}},
 ]
 
 

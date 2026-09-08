@@ -62,21 +62,80 @@ def find_record_array(data):
     payload always produces the same document — an unstable choice would change
     the text, and any prompt cache built on it, for no reason.
     """
-    candidates = [
-        (path, value)
-        for path, value in _walk(data, (), MAX_RECORD_SEARCH_DEPTH)
-        if _is_record_list(value)
-    ]
+    candidates = []
+    for path, value in _walk(data, (), MAX_RECORD_SEARCH_DEPTH):
+        if _is_record_list(value):
+            candidates.append((path, value, None))
+        elif _is_record_map(value):
+            key_column = free_key_name(value.values())
+            candidates.append((path, map_to_rows(value, key_column), key_column))
+
     if not candidates:
-        return None, None
+        return None, None, None
 
     def rank(candidate):
-        path, rows = candidate
+        path, rows, _ = candidate
         cells = sum(len(row) for row in rows)
         return (-cells, len(path), path)
 
-    path, rows = min(candidates, key=rank)
-    return rows, list(path)
+    path, rows, key_column = min(candidates, key=rank)
+    return rows, list(path), key_column
+
+
+def _is_record_map(value):
+    """A dict whose values are all objects sharing one set of keys.
+
+    {"bitcoin": {...}, "ethereum": {...}} is a table wearing a different hat:
+    the records are the values and their identity is the key holding them.
+    Common in price feeds, config APIs and anything Firebase-shaped. Measured
+    2026-09-08 on coingecko_prices.json — eight objects of twelve identical keys,
+    compressing by 0% because nothing looked for this shape. As a table: 32.5%.
+
+    The values must be OBJECTS, not scalars. exchangerates_usd.json is the same
+    dict-with-dynamic-keys shape but its values are bare floats, and a
+    two-column key/value table costs 1.3% MORE than the JSON it would replace —
+    there is no repeated key name to factor out when each record is one number.
+    That payload is in the sample set precisely to hold this line.
+
+    Identical key sets are required rather than merely similar ones: a union
+    schema over ragged objects is fine for a list, where the absences are real
+    data, but a dict of unrelated objects is not a table and tabulating it would
+    produce a wide sparse mess that the savings gate would reject anyway.
+    """
+    if not isinstance(value, dict) or len(value) < MIN_RECORDS_IN_MAP:
+        return False
+    if not all(isinstance(record, dict) and record for record in value.values()):
+        return False
+    return len({tuple(sorted(record)) for record in value.values()}) == 1
+
+
+MIN_RECORDS_IN_MAP = 2
+# Same reasoning as MIN_ROWS_TO_TABULATE: below two records there is no repeated
+# key name to factor out.
+
+
+def free_key_name(records, preferred="_key"):
+    """A column name for the map's keys that no record already uses."""
+    taken = {key for record in records for key in record}
+    name = preferred
+    suffix = 2
+    while name in taken:
+        name = f"{preferred}{suffix}"
+        suffix += 1
+    return name
+
+
+def map_to_rows(mapping, key_column):
+    """{"btc": {...}} -> [{"_key": "btc", ...}]. Inverse: rows_to_map."""
+    return [{key_column: key, **record} for key, record in mapping.items()]
+
+
+def rows_to_map(rows, key_column):
+    """Inverse of map_to_rows."""
+    return {
+        row[key_column]: {k: v for k, v in row.items() if k != key_column}
+        for row in rows
+    }
 
 
 def _walk(value, path, depth):
@@ -243,7 +302,7 @@ def restore_constants(flat_rows, constants):
     return [{**row, **constants} for row in flat_rows]
 
 
-def build_table(rows, array_path=(), wrapper=None):
+def build_table(rows, array_path=(), wrapper=None, key_column=None):
     """Rows of JSON objects -> the table shape that src/render.py writes out.
 
     The schema is the UNION of every row's keys, not the intersection. A key
@@ -280,6 +339,10 @@ def build_table(rows, array_path=(), wrapper=None):
         "cells": cells,
         "constants": constants,
         "array_path": list(array_path),
+        # Non-None when the records came from a dict rather than a list: names
+        # the column holding what used to be the dict key. rebuild_rows leaves
+        # it in place; decompress._nest turns the rows back into a map.
+        "key_column": key_column,
         # Whatever else sat beside the records in the wrapper object. An API
         # that returns {"hits": [...], "nbHits": 431, "page": 0} keeps its
         # metadata; dropping it would lose data the round-trip claims to

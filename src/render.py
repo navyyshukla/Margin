@@ -47,6 +47,10 @@ LEGEND_PREFIX = "#legend "
 CONST_PREFIX = "#const"
 PATH_PREFIX = "#path"
 WRAP_PREFIX = "#wrap"
+KEYED_PREFIX = "#keyed"
+# Present when the records came from a dict rather than a list: names the column
+# holding what was the dict key. Without it the rows would come back as a list
+# and the identities would be data in a column rather than the keys they were.
 
 NULL_CELL = "\\N"
 EMPTY_STRING_CELL = "\\E"
@@ -116,6 +120,15 @@ def legend_for(table, encoded_rows):
     if any(cell == "" for row in encoded_rows for cell in row):
         seen.append("empty cell = key absent in that row")
 
+    # #keyed is a structural line rather than a cell encoding, but it is the
+    # least guessable thing in the format: without it a reader sees an ordinary
+    # column called _key and no reason to think the rows were ever a dict.
+    if table.get("key_column"):
+        seen.append(
+            f"#keyed = rows came from an object; column {table['key_column']} "
+            "holds each record's key"
+        )
+
     return "; ".join(seen)
 
 
@@ -137,6 +150,8 @@ def render(table):
     # common bare-array case one line shorter.
     if table["array_path"]:
         lines.append(PATH_PREFIX + json.dumps(table["array_path"], separators=(",", ":")))
+    if table.get("key_column"):
+        lines.append(KEYED_PREFIX + json.dumps(table["key_column"], separators=(",", ":")))
     if table.get("wrapper"):
         lines.append(WRAP_PREFIX + json.dumps(table["wrapper"], separators=(",", ":")))
 
@@ -172,6 +187,11 @@ def parse(text):
     array_path = []
     if index < len(lines) and lines[index].startswith(PATH_PREFIX):
         array_path = json.loads(lines[index][len(PATH_PREFIX):])
+        index += 1
+
+    key_column = None
+    if index < len(lines) and lines[index].startswith(KEYED_PREFIX):
+        key_column = json.loads(lines[index][len(KEYED_PREFIX):])
         index += 1
 
     wrapper = {}
@@ -212,6 +232,7 @@ def parse(text):
         "cells": cells,
         "constants": constants,
         "array_path": array_path,
+        "key_column": key_column,
         "wrapper": wrapper,
     }
 

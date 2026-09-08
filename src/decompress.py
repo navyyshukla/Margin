@@ -15,7 +15,7 @@ import json
 import sys
 
 import render
-from table import rebuild_rows
+from table import rebuild_rows, rows_to_map
 
 
 def decompress(text):
@@ -30,10 +30,17 @@ def decompress(text):
 
     table = render.parse(text)
     rows = rebuild_rows(table)
-    return _nest(rows, table["array_path"], table.get("wrapper") or {})
+
+    # Records that came from a dict go back into one. The key column carries
+    # what the dict keys were; leaving it as a column would turn an object's
+    # identity into an ordinary field.
+    key_column = table.get("key_column")
+    records = rows_to_map(rows, key_column) if key_column else rows
+
+    return _nest(records, table["array_path"], table.get("wrapper") or {})
 
 
-def _nest(rows, array_path, wrapper):
+def _nest(records, array_path, wrapper):
     """Put the records back where they were found, inside the skeleton.
 
     The wrapper is the whole document minus the rows (see compress.skeleton), so
@@ -46,12 +53,12 @@ def _nest(rows, array_path, wrapper):
     "data" value, silently dropping every sibling of "items" inside it.
     """
     if not array_path:
-        return rows
+        return records
 
     node = wrapper
     for key in array_path[:-1]:
         node = node[key]
-    node[array_path[-1]] = rows
+    node[array_path[-1]] = records
     return wrapper
 
 

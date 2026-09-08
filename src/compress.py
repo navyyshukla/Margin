@@ -174,7 +174,7 @@ def compress_json(data, original_text=None):
             return original_text, notes + ["no improvement — returned the input unchanged"]
         return text, notes
 
-    rows, array_path = find_record_array(stripped)
+    rows, array_path, key_column = find_record_array(stripped)
     if rows is None:
         return result(as_json, ["no record array found — nothing to tabulate"])
     if len(rows) < MIN_ROWS_TO_TABULATE:
@@ -192,7 +192,7 @@ def compress_json(data, original_text=None):
     # correct, emit JSON" — instead of two, and means an unanticipated payload
     # degrades to plain JSON rather than crashing the compressor.
     try:
-        text = render.render(build_table(rows, array_path, wrapper))
+        text = render.render(build_table(rows, array_path, wrapper, key_column))
         restored = decompress(text)
     except Exception as exc:
         return result(as_json, [f"table render/parse failed ({type(exc).__name__}: {exc})"])
