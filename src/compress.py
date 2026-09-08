@@ -234,12 +234,21 @@ if __name__ == "__main__":
     # used to read argv and stdout itself, which meant `margin` and
     # `python src/compress.py` were two implementations of "read a payload,
     # write a document" that could drift — the same mistake Rule 4 records for
-    # encode_cell and decode_cell, one layer up. Imported here rather than at
-    # the top because cli imports this module.
+    # encode_cell and decode_cell, one layer up.
     #
-    # There is no plain_text compression rule yet and nothing has needed one
-    # (CLAUDE.md's "study just in time"); cli.py passes non-JSON through
-    # untouched rather than mangling content we do not understand.
-    import cli
+    # runpy, not `import cli; cli.main()`, and the difference is the point. The
+    # first version called main() but not die_on_broken_pipe(), so
+    # `python src/compress.py f.json | head -1` still printed the exact
+    # traceback the change was written to remove — a second entry point is a
+    # second place to forget a line, which is the whole failure being fixed.
+    # Running cli.py *as __main__* means it does everything it does for
+    # `margin`, and there is no list of setup steps to keep in sync.
+    #
+    # It also stops this file being imported twice under two names: cli.py's
+    # `from compress import ...` loads the module normally, so one `_ENCODING`
+    # and one token_count cache serve the run.
+    import os
+    import runpy
 
-    sys.exit(cli.main())
+    runpy.run_path(os.path.join(os.path.dirname(os.path.abspath(__file__)), "cli.py"),
+                   run_name="__main__")

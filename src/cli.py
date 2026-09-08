@@ -165,12 +165,39 @@ def main(argv=None):
 
     content_type, data = detect_content_type(raw_text)
     if content_type != "json":
+        # No summary line here. Its percentage would be 0.0% by construction —
+        # it can say nothing else — and computing it is what drags tiktoken
+        # onto the one path whose entire promise is "handed back exactly what
+        # you gave me". On a machine with no tiktoken cache that means fetching
+        # a BPE vocabulary over the network to print a constant, so a failed
+        # curl on a fresh laptop would traceback instead of passing through.
+        # The not-UTF-8 branch above already prints no summary; now they agree.
         note("not JSON — passed through unchanged")
-        note(summary(raw_text, raw_text))
         sys.stdout.buffer.write(raw_bytes)
         return 0
 
-    text, notes = compress_json(data, original_text=raw_text)
+    try:
+        text, notes = compress_json(data, original_text=raw_text)
+    except Exception as exc:
+        # The library's own standing rule is "if the table cannot be proved
+        # correct, emit JSON". This is that rule one layer up: if the payload
+        # cannot be compressed at all, emit the payload.
+        #
+        # Bought by a real one. json.loads parses 3,000 nested arrays happily
+        # in its C scanner, then strip_boilerplate recurses through them and
+        # blows the stack — and RecursionError is not a JSONDecodeError, so it
+        # escaped detect_content_type and this function both. Exit 1, traceback
+        # on stderr, and ZERO BYTES on stdout: `curl ... | margin | pbcopy`
+        # silently replaced the clipboard with nothing.
+        #
+        # Catching Exception rather than RecursionError on purpose. The
+        # promise this file makes is about the pipeline, not about which bugs
+        # were anticipated: whatever goes wrong in there, the bytes you handed
+        # over come back out and stderr says what happened.
+        note(f"compression failed ({type(exc).__name__}: {exc}) — passed through unchanged")
+        sys.stdout.buffer.write(raw_bytes)
+        return 0
+
     for message in notes:
         note(message)
     note(summary(raw_text, text))

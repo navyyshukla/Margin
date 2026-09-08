@@ -256,3 +256,16 @@ takes is now covered rather than waved through.
 
 **Before writing a skip, ask which gate runs in the environment that triggers
 it.** If the answer is "the one I am writing this for", it is not a skip.
+
+**And the first fix for this rule broke it again.** Replacing the skip with
+"exit 2, and stderr mentions `uv venv`" checked two things that do not depend on
+the symlink loop — the only reason `bin/margin` was added to the gate at all.
+The reviewer deleted the entire resolution loop and `cli_test.py` still printed
+"all CLI checks pass". Asserting a branch *runs* is not asserting it is
+**right**: the check now invokes through a symlink from an unrelated directory
+and demands the error name *this repo's* `.venv`, because a wrapper that fails
+to resolve its own path computes the wrong repo and says so. The error path
+carries the evidence; it just had to be asked for.
+
+That is Rule 3's shape a third time. A check aimed near the claim is not a check
+aimed at it.

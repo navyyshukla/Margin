@@ -225,6 +225,35 @@ def main():
           b"Traceback" not in pipe_err and b"BrokenPipe" not in pipe_err,
           f"stderr={pipe_err[-200:]!r}")
 
+    # The same thing through compress.py, which is a second entry point and so
+    # a second place to forget a line of setup. It did: the first version of
+    # its __main__ called cli.main() without die_on_broken_pipe(), so the exact
+    # traceback above was still live here while the check passed on cli.py.
+    compress_py = os.path.join(SRC, "compress.py")
+    reader = subprocess.Popen(["head", "-1"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL)
+    writer = subprocess.Popen([sys.executable, compress_py], stdin=subprocess.PIPE,
+                              stdout=reader.stdin, stderr=subprocess.PIPE)
+    reader.stdin.close()
+    writer.stdin.write(TABULATES.encode())
+    writer.stdin.close()
+    legacy_err = writer.stderr.read()
+    writer.wait()
+    reader.wait()
+    check("compress.py entry point behaves the same on a closed pipe",
+          b"Traceback" not in legacy_err, f"stderr={legacy_err[-200:]!r}")
+
+    # ---- an unexpected crash must not empty the pipe ------------------------
+    # json.loads parses this in its C scanner, then strip_boilerplate recurses
+    # through it and blows the stack. RecursionError is not a JSONDecodeError,
+    # so it escaped every guard: exit 1, traceback, and zero bytes on stdout —
+    # `curl ... | margin | pbcopy` clearing the clipboard. The contract is that
+    # bytes in means bytes out, whatever goes wrong in between.
+    nested = b"[" * 3000 + b"]" * 3000
+    code, out8, err9 = run([], stdin=nested)
+    check("pathological input: exit 0, bytes come back, stderr says what broke",
+          code == 0 and out8 == nested and b"passed through unchanged" in err9,
+          f"exit={code} out={len(out8)}B of {len(nested)}B stderr={err9[-120:]!r}")
+
     # ---- the wrapper -------------------------------------------------------
     # bin/margin holds real logic — symlink resolution and the venv path — and
     # is the only file here that is not Python.
@@ -236,14 +265,31 @@ def main():
     # behaviour — exit 2 saying which venv and how to make it — so check that
     # instead. Same branch a fresh clone takes, now covered rather than waved
     # through.
-    venv_python = os.path.join(os.path.dirname(SRC), ".venv", "bin", "python")
+    repo = os.path.dirname(SRC)
+    venv_python = os.path.join(repo, ".venv", "bin", "python")
     if not os.path.exists(WRAPPER):
         check("bin/margin exists", False, f"not at {WRAPPER}")
     elif not os.access(venv_python, os.X_OK):
-        done = subprocess.run([WRAPPER], input=TABULATES.encode(),
-                              capture_output=True, check=False)
-        check("bin/margin without a .venv: exit 2 and says how to make one",
-              done.returncode == 2 and b"uv venv" in done.stderr,
+        # Checking exit 2 and "uv venv" here was not enough, and the review
+        # caught it: neither depends on the symlink loop, so deleting that loop
+        # outright left this printing "all CLI checks pass" — in the one branch
+        # pre-commit can ever reach. Rule 12 written, then violated in the fix
+        # for Rule 12.
+        #
+        # A wrapper that fails to resolve its own symlink computes the wrong
+        # repo, so it names the wrong .venv. Invoking through a link from an
+        # unrelated directory and demanding the message name THIS repo's venv
+        # exercises the resolution without needing a venv to exist — the error
+        # path carries the evidence.
+        with tempfile.TemporaryDirectory() as elsewhere:
+            link = os.path.join(elsewhere, "margin")
+            os.symlink(WRAPPER, link)
+            done = subprocess.run([link], input=TABULATES.encode(), cwd=elsewhere,
+                                  capture_output=True, check=False)
+        check("bin/margin without a .venv: exit 2, and it resolved the symlink "
+              "to name the right repo",
+              done.returncode == 2 and b"uv venv" in done.stderr
+              and os.path.join(repo, ".venv").encode() in done.stderr,
               f"exit={done.returncode} stderr={done.stderr!r}")
     else:
         done = subprocess.run([WRAPPER], input=TABULATES.encode(),

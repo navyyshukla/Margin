@@ -41,9 +41,23 @@ looks exactly like a hang.
 
 | Code | Means | Cases |
 |---|---|---|
-| 0 | stdout is what you want | compressed; 0% saving; not JSON; not even UTF-8 |
+| 0 | stdout is what you want | compressed; 0% saving; not JSON; not even UTF-8; **compression crashed** |
 | 2 | margin was called wrong, or there was nothing to read | no such file; empty input; two paths; unknown option |
 | 141 | the reader closed the pipe (`\| head -1`) | normal, and what `cat` does |
+
+**A crash is a 0, not a 1.** The compression call is wrapped, and anything that
+escapes it emits the input unchanged with a loud line on stderr. The library's
+standing rule is "if the table cannot be proved correct, emit JSON"; this is the
+same rule one layer up — if the payload cannot be compressed at all, emit the
+payload.
+
+Bought by a real one. `json.loads` parses 3,000 nested arrays happily in its C
+scanner, and then `strip_boilerplate` recurses through them and blows the stack.
+`RecursionError` is not a `JSONDecodeError`, so it escaped every guard: exit 1,
+a traceback, and **zero bytes on stdout** — `curl ... | margin | pbcopy`
+replacing the clipboard with nothing. The `except` is deliberately `Exception`
+rather than `RecursionError`: the promise is about the pipeline, not about which
+bugs were anticipated.
 
 There is deliberately **no code for "compressed poorly"**. 0% saving is a
 correct outcome for `openmeteo_forecast.json` and `exchangerates_usd.json` —
@@ -94,6 +108,21 @@ Four gates were green throughout. All four call `compress_json` in-process, so
 none of them had ever seen an argument, a stream or an exit code. That is the
 whole argument for building the tool before the next phase, and it is now
 Rule 11 in `docs/harness.md`.
+
+The PR review then found the same bug still live on the *other* entry point:
+`python src/compress.py f.json | head -1` tracebacked, because its `__main__`
+called `cli.main()` without `die_on_broken_pipe()`. A second entry point is a
+second place to forget a line, so it now runs `cli.py` **as `__main__`** through
+`runpy` — everything `margin` does, with no setup list to keep in sync.
+
+## No summary line on the passthrough paths
+
+`not JSON` and `not UTF-8` print what happened and stop. The percentage would be
+`0.0%` by construction, and computing it is what drags tiktoken onto the one
+path whose entire promise is handing your bytes back — on a machine with no
+tiktoken cache, that means fetching a BPE vocabulary over the network to print a
+constant, so a failed curl on a fresh laptop would traceback instead of passing
+through.
 
 ## Deliberately not built
 
