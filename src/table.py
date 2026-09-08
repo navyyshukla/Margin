@@ -34,6 +34,17 @@ MAX_FLATTEN_DEPTH = 2
 # than the JSON cell it replaced. Raise it when a payload shows it pays.
 
 
+MAX_RECORD_SEARCH_DEPTH = 4
+# How deep to hunt for the records. Depth 1 covered GitHub (a bare array) and
+# HackerNews ({"hits": [...]}), and stopping there quietly returned *nothing* for
+# the very common {"data": {"items": [...]}} — JSON:API, GraphQL, and countless
+# REST wrappers. Measured 2026-09-08: such a payload compressed by 0%.
+#
+# 4 covers every wrapper convention seen so far with room to spare, and the walk
+# only descends through dict keys, so the cost is the number of nested objects,
+# not the size of the data.
+
+
 def find_record_array(data):
     """Locate the list-of-objects worth tabulating.
 
@@ -41,21 +52,45 @@ def find_record_array(data):
     decompression can rebuild whatever wrapped it. Returns (None, None) when
     there is nothing table-shaped here.
 
-    The wrapper case is not hypothetical: GitHub returns a bare array, but plenty
-    of APIs (HackerNews/Algolia, for one) return {"hits": [...]} with metadata
-    alongside. Checking only isinstance(data, list) would quietly skip those.
+    Picks the LARGEST candidate rather than the first one found. "First" was an
+    accident of dict ordering: a payload with a small incidental list before the
+    real records would tabulate the wrong one. Size is measured as total cells
+    (rows x keys per row), which is the closest cheap proxy for "how much data
+    would a table save here".
+
+    Ties break toward the shallower path, then alphabetically, so the same
+    payload always produces the same document — an unstable choice would change
+    the text, and any prompt cache built on it, for no reason.
     """
-    if _is_record_list(data):
-        return data, []
+    candidates = [
+        (path, value)
+        for path, value in _walk(data, (), MAX_RECORD_SEARCH_DEPTH)
+        if _is_record_list(value)
+    ]
+    if not candidates:
+        return None, None
 
-    if isinstance(data, dict):
-        # Only descend one level: a records list is normally a top-level field,
-        # and searching deeper risks tabulating something incidental.
-        for key, value in data.items():
-            if _is_record_list(value):
-                return value, [key]
+    def rank(candidate):
+        path, rows = candidate
+        cells = sum(len(row) for row in rows)
+        return (-cells, len(path), path)
 
-    return None, None
+    path, rows = min(candidates, key=rank)
+    return rows, list(path)
+
+
+def _walk(value, path, depth):
+    """Every (path, value) reachable through dict keys, down to `depth`.
+
+    Only dict keys are followed. List *indices* are deliberately not walked:
+    `#path` is a sequence of keys, so a list found inside another list could not
+    be addressed on the way back, and the outer list is the one worth tabulating
+    anyway.
+    """
+    yield path, value
+    if depth > 0 and isinstance(value, dict):
+        for key, child in value.items():
+            yield from _walk(child, path + (key,), depth - 1)
 
 
 def _is_record_list(value):

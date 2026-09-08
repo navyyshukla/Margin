@@ -77,6 +77,34 @@ def uses_url_template_convention(data):
     return False
 
 
+def skeleton(data, array_path):
+    """The whole document with the record array lifted out of it.
+
+    This is what the `#wrap` line carries, and it used to be something narrower:
+    the array's top-level *siblings*. That was only ever correct because the
+    records were always at depth 1. Once find_record_array could return
+    ["data", "items"], siblings-of-the-first-key was wrong in both directions —
+    it dropped everything beside `items` inside `data`, and decompress._nest
+    merging `{"data": {"items": rows}}` over the wrapper at the top level
+    overwrote the rest of `data` wholesale.
+
+    Carrying the entire skeleton instead makes the depth irrelevant: whatever
+    the document held, minus the rows, is written down, and the rows go back
+    exactly where they came from.
+
+    Costs nothing at depth 1 — for {"hits": [...], "nbHits": 431} this returns
+    {"nbHits": 431}, the same dict the old code built — so HackerNews and GitHub
+    render byte-identically to before.
+    """
+    if not array_path:
+        return {}  # the records were the whole document; there is no wrapper
+
+    key = array_path[0]
+    if len(array_path) == 1:
+        return {k: v for k, v in data.items() if k != key}
+    return {**data, key: skeleton(data[key], array_path[1:])}
+
+
 MIN_ROWS_TO_TABULATE = 2
 # Measured 2026-09-07 on github_issues.json: the table format's fixed cost is
 # one header line, so it starts paying at the first repeated row. Below this a
@@ -108,9 +136,7 @@ def compress_json(data):
     if len(rows) < MIN_ROWS_TO_TABULATE:
         return as_json, [f"only {len(rows)} row(s) — below MIN_ROWS_TO_TABULATE"]
 
-    wrapper = {}
-    if array_path:
-        wrapper = {k: v for k, v in stripped.items() if k != array_path[0]}
+    wrapper = skeleton(stripped, array_path)
 
     # Don't reason about whether the inverse is correct — run it. A transform we
     # cannot undo is a transform we don't ship.

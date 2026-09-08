@@ -34,19 +34,25 @@ def decompress(text):
 
 
 def _nest(rows, array_path, wrapper):
-    """Put the records back under the key they were found beneath.
+    """Put the records back where they were found, inside the skeleton.
 
-    The wrapper's other keys go back too — an API returning
-    {"hits": [...], "nbHits": 431, "page": 0} keeps its metadata, which the
-    round-trip check would otherwise catch us losing.
+    The wrapper is the whole document minus the rows (see compress.skeleton), so
+    everything that surrounded the records comes back with them — an API
+    returning {"hits": [...], "nbHits": 431, "page": 0} keeps its metadata, which
+    the round-trip check would otherwise catch us losing.
+
+    Walks the path rather than merging at the top. Building {"data": {"items":
+    rows}} and merging that over the wrapper would replace the wrapper's whole
+    "data" value, silently dropping every sibling of "items" inside it.
     """
     if not array_path:
         return rows
 
-    result = rows
-    for key in reversed(array_path):
-        result = {key: result}
-    return {**wrapper, **result}
+    node = wrapper
+    for key in array_path[:-1]:
+        node = node[key]
+    node[array_path[-1]] = rows
+    return wrapper
 
 
 def main():

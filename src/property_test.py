@@ -113,13 +113,34 @@ def random_payload(rng, keys):
     """
     chosen = rng.sample(keys, rng.randint(1, min(5, len(keys))))
     families = {key: value_family(rng) for key in chosen}
-    return [
+    rows = [
         {
             "i": index,
             **{k: gen() for k, gen in families.items() if rng.random() < 0.85},
         }
         for index in range(rng.randint(6, 20))
     ]
+    return _wrap(rows, rng)
+
+
+def _wrap(rows, rng):
+    """Bury the records in an envelope, the way most real APIs ship them.
+
+    A bare top-level array is the minority case — GitHub does it, but Algolia
+    wraps in `hits`, JSON:API and GraphQL in `data`, and plenty of others go
+    deeper. Generating only bare arrays is why a payload shaped
+    {"data": {"items": [...]}} reached 2026-09-08 compressing by 0%: nothing in
+    the sweep had that shape, so nothing failed.
+
+    Metadata siblings are added at each level so the skeleton actually has
+    something to lose if compress.skeleton or decompress._nest drops it.
+    """
+    depth = rng.choice([0, 0, 1, 1, 2, 3])  # bare arrays still common, not dominant
+    node = rows
+    for level in range(depth):
+        key = rng.choice(["data", "items", "hits", "results", "r"])
+        node = {key: node, f"meta{level}": rng.choice([1, "m", None, {"n": 2}])}
+    return node
 
 
 # Notes that mean the table itself is broken, as opposed to notes that mean the
@@ -178,6 +199,13 @@ def shrink(payload):
 
 def _shrink(payload, holds):
     """Greedily drop rows, then keys, while `holds` still reports a failure."""
+    if not isinstance(payload, list):
+        # A wrapped payload — the rows are buried in an envelope, and cutting
+        # the envelope apart would change which array gets tabulated, so the
+        # shrunk result would no longer reproduce the failure it came from.
+        # Report it whole; the generator's envelopes are small.
+        return payload
+
     changed = True
     while changed:
         changed = False
@@ -231,6 +259,13 @@ MUST_TABULATE = [
     repeated([], []),                              # no evidence: must not claim dints
     repeated([True], [1]),                         # [True] == [1] under plain ==
     [{"a": 1, "b": "x"} for _ in range(8)],        # every column constant: header [N]{}
+    # Wrapper shapes, 2026-09-08. Records used to be findable only at depth 0-1,
+    # so the first of these compressed by exactly 0%.
+    {"data": {"items": [{"a": i, "b": "x" * 20} for i in range(8)], "total": 8}},
+    {"r": {"data": {"items": [{"a": i, "b": "y" * 20} for i in range(8)]}}},
+    {"users": [{"a": i, "b": "u" * 20} for i in range(8)], "posts": [{"c": 1}, {"c": 2}]},
+    {"small": [{"z": 1}, {"z": 2}],                # must tabulate `big`, not `small`
+     "big": [{"a": i, "b": "q" * 20} for i in range(10)]},
 ]
 
 MAY_DEGRADE = [
@@ -244,6 +279,32 @@ MAY_DEGRADE = [
     [{"a": {"b": {"c": 1}}}, {"i": 2}],            # absent nested parent
     [{"a": 5, "a.b": 6}, {"a": 7, "a.b": 8}],      # same key as value and parent
 ]
+
+
+# Where the records must be found. Round-trip cannot check this: tabulating the
+# wrong array still round-trips perfectly, it just compresses far less and puts
+# the interesting data in #wrap as raw JSON.
+EXPECTED_PATHS = [
+    ([{"a": i, "b": "x" * 20} for i in range(8)], []),
+    ({"hits": [{"a": i, "b": "x" * 20} for i in range(8)], "nbHits": 8}, ["hits"]),
+    ({"data": {"items": [{"a": i, "b": "x" * 20} for i in range(8)], "total": 8}},
+     ["data", "items"]),
+    ({"r": {"data": {"items": [{"a": i, "b": "y" * 20} for i in range(8)]}}},
+     ["r", "data", "items"]),
+    # The largest candidate wins, not the first one dict ordering happens to
+    # offer. `small` comes first and would have been chosen before 2026-09-08.
+    ({"small": [{"z": 1}, {"z": 2}],
+      "big": [{"a": i, "b": "q" * 20} for i in range(10)]}, ["big"]),
+]
+
+
+def path_chosen(payload):
+    """Which array the compressor actually tabulated, or None if it emitted JSON."""
+    text, _ = compress_json(payload)
+    if not text.startswith(FORMAT_MARKER):
+        return None
+    line = next((l for l in text.split("\n") if l.startswith("#path")), None)
+    return json.loads(line[len("#path"):]) if line else []
 
 
 def type_claims_are_backed(payload):
@@ -264,9 +325,11 @@ def type_claims_are_backed(payload):
     if not inner:
         return True
 
+    # Follow the document's own #path rather than guessing where the rows are —
+    # they can now sit several levels down inside the wrapper.
     rows = decompress(text)
-    if isinstance(rows, dict):
-        rows = next(v for v in rows.values() if isinstance(v, list))
+    for key in path_chosen(payload) or []:
+        rows = rows[key]
 
     for spec in inner.split(","):
         name, type_name = spec.rsplit(":", 1)
@@ -301,6 +364,13 @@ def main():
     for index, payload in enumerate(MAY_DEGRADE):
         if not degrades_safely(payload):
             failures.append(("MAY_DEGRADE", index, payload))
+
+    for index, (payload, expected) in enumerate(EXPECTED_PATHS):
+        found = path_chosen(payload)
+        if found != expected:
+            failures.append((
+                f"EXPECTED_PATHS (wanted {expected}, tabulated {found})", index, payload,
+            ))
 
     # Sweep 1: keys the format can express. These must produce a working table,
     # so a silently-abandoned table is a failure.
