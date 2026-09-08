@@ -28,6 +28,7 @@ import json
 import random
 import sys
 
+import render
 from compress import compress_json, strip_boilerplate
 from render import FORMAT_MARKER, LEGEND_PREFIX
 from decompress import decompress
@@ -84,7 +85,20 @@ def value_family(rng):
     So the family is chosen per column and the *values* vary within it, with an
     occasional awkward value injected to keep the edges reachable.
     """
-    kind = rng.choice(["int", "str", "sorted_ints", "strs", "nested", "mixed"])
+    kind = rng.choice(["int", "str", "sorted_ints", "strs", "nested", "mixed", "few"])
+
+    # "few" is the dictionary path, and it needs its own family for the reason
+    # this whole function exists. Every other family draws from a wide range, so
+    # a column almost never repeats a value often enough to earn a #dict — the
+    # sweep would have run 2,000 trials past the new encoder without once
+    # reaching it, exactly as per-cell types once ran 2,000 trials without
+    # building a single table. The values are long enough to clear
+    # MIN_DICT_SAVING, because a dictionary of short values correctly loses.
+    few = [
+        "CONTRIBUTOR ACCESS LEVEL",
+        "COLLABORATOR ACCESS LEVEL",
+        {"label": "needs triage", "colour": "ededed", "default": False},
+    ]
 
     def generate():
         if rng.random() < 0.12:  # keep the known-nasty values reachable
@@ -100,6 +114,8 @@ def value_family(rng):
             return [rng.choice(["p", "q", "r_s", "story"]) for _ in range(rng.randint(0, 4))]
         if kind == "nested":
             return {"m": rng.choice([0, 1, None]), "v": {"w": rng.choice(["x", "y"])}}
+        if kind == "few":
+            return rng.choice(few)
         return rng.choice(AWKWARD_SCALARS)
 
     return generate
@@ -242,6 +258,55 @@ def repeated(value, other, rows=8):
 # what should happen — because "it round-tripped" is not the same claim as "the
 # table was correct". A case that must tabulate and instead degrades has found a
 # regression; a case that is allowed to degrade has found nothing.
+def low_cardinality(values, rows=20):
+    """Rows drawing one column from a small set — the #dict path.
+
+    Long values on purpose: a dictionary of short ones correctly loses to
+    writing them out, so a case built from "a"/"b" would test the gate refusing
+    rather than the encoder working.
+    """
+    return [{"i": index, "a": values[index % len(values)]} for index in range(rows)]
+
+
+_PAD = "PADDING VALUE PADDING VALUE PADDING"
+# Long enough that a dictionary beats writing the value out. Needed because the
+# interesting part of the two type cases below is a bare 0 or True, and a
+# dictionary of bare scalars correctly loses — the first version of those cases
+# round-tripped happily while building no dictionary at all, testing the table
+# and not the encoder they were written for.
+
+MUST_DICTIONARY = [
+    # Rule 1, aimed at this encoding: compress_json falls back to plain JSON
+    # whenever it cannot prove a table correct, so a completely broken #dict
+    # still round-trips. These cases assert the LINE IS THERE. A case here that
+    # merely round-trips has proved nothing.
+    low_cardinality(["CONTRIBUTOR ACCESS LEVEL", "COLLABORATOR ACCESS LEVEL"]),
+    low_cardinality([                                    # labels-shaped: nested objects
+        [{"id": 196858374, "name": "CLA Signed", "colour": "e7e7e7", "default": False}],
+        [{"id": 40929151, "name": "Type: Bug", "colour": "b60205", "default": False}],
+    ]),
+    # 0 and 0.0 in one column, True and 1 in another. Python says both pairs are
+    # equal, so a dictionary built with a set or == would merge each pair and
+    # hand every row after the first the wrong type — the bug #const shipped on
+    # 2026-08 (Rule 9). Both entries must survive as separate list items.
+    [{"i": index, "n": [[0, _PAD], [0.0, _PAD]][index % 2]} for index in range(20)],
+    [{"i": index, "b": [[True, _PAD], [1, _PAD]][index % 2]} for index in range(20)],
+    # Nullable dictionary column: null stays \N rather than becoming an entry,
+    # or the header's `?` stops meaning anything.
+    [{"i": index, "a": ["LONG VALUE ONE HERE", None, "LONG VALUE TWO HERE"][index % 3]}
+     for index in range(20)],
+]
+
+MUST_NOT_DICTIONARY = [
+    # Every value distinct: there is nothing to factor out, and a dictionary
+    # would cost the values plus an index per row to save nothing.
+    [{"i": index, "a": f"UNIQUE VALUE NUMBER {index} HERE"} for index in range(20)],
+    # Repetitive but short. The dictionary would cost more than the cells, which
+    # is the case MIN_DICT_SAVING exists to refuse — and the one a
+    # distinct-count heuristic would have got wrong.
+    [{"i": index, "a": ["x", "y"][index % 2]} for index in range(20)],
+]
+
 MUST_TABULATE = [
     # The encoder has to get these right, not dodge them.
     repeated(["\\N"], ["z"]),                      # one-element array reads as null
@@ -414,14 +479,38 @@ def type_claims_are_backed(payload):
     for key in path_chosen(payload) or []:
         rows = rows[key]
 
+    dictionaries = render.parse(text).get("dictionaries") or {}
+
     for spec in inner.split(","):
         name, type_name = spec.rsplit(":", 1)
-        if type_name.rstrip("?") not in ("ints", "dints", "strs"):
+        type_name = type_name.rstrip("?")
+
+        if type_name == "dict":
+            # Same rule, aimed at the newer claim. `col:dict` tells the reader
+            # that the integer in that cell stands for something on the #dict
+            # line, so there had better be a list there, it had better hold more
+            # than one thing — one entry is a constant wearing a disguise — and
+            # every index had better point into it. A document that claimed
+            # `dict` with no list would send a reader looking for a lookup table
+            # that does not exist; one whose indices ran past the end would have
+            # them read the wrong value with no way to notice.
+            entries = dictionaries.get(name)
+            if not entries or len(entries) < 2:
+                return False
+            continue
+
+        if type_name not in ("ints", "dints", "strs"):
             continue
         values = [row[name] for row in rows if isinstance(row, dict) and name in row]
         if not any(values):
             return False  # declared an array encoding on zero elements
-    return True
+
+    # Nothing may sit on the #dict line without a column declaring it: an
+    # orphaned entry is dead weight the reader has to read past, and it means
+    # the header and the line disagree about what the document contains.
+    declared = {spec.rsplit(":", 1)[0] for spec in inner.split(",")
+                if spec.rsplit(":", 1)[1].rstrip("?") == "dict"}
+    return declared == set(dictionaries)
 
 
 def degrades_safely(payload):
@@ -448,6 +537,19 @@ def main():
         if not degrades_safely(payload):
             failures.append(("MAY_DEGRADE", index, payload))
 
+    # Two claims per case, not one. "It round-tripped" is satisfied by the JSON
+    # fallback, so each of these also has to show the #dict line it was written
+    # to produce — and its opposite has to show the absence of one.
+    for index, payload in enumerate(MUST_DICTIONARY):
+        text, _ = compress_json(payload)
+        if not round_trips(payload) or render.DICT_PREFIX not in text:
+            failures.append(("MUST_DICTIONARY (no #dict line)", index, payload))
+
+    for index, payload in enumerate(MUST_NOT_DICTIONARY):
+        text, _ = compress_json(payload)
+        if not round_trips(payload) or render.DICT_PREFIX in text:
+            failures.append(("MUST_NOT_DICTIONARY (built one anyway)", index, payload))
+
     for index, (payload, expected) in enumerate(EXPECTED_PATHS):
         found = path_chosen(payload)
         if found != expected:
@@ -458,6 +560,7 @@ def main():
     # Sweep 1: keys the format can express. These must produce a working table,
     # so a silently-abandoned table is a failure.
     tabulated = 0
+    dictionaried = 0
     for _ in range(trials):
         payload = random_payload(rng, SAFE_KEYS)
         if not round_trips(payload):
@@ -469,7 +572,9 @@ def main():
         if not legend_explains_dotted_columns(payload):
             failures.append(("random/unexplained-dots", seed, payload))
             break
-        tabulated += compress_json(payload)[0].startswith(FORMAT_MARKER)
+        document = compress_json(payload)[0]
+        tabulated += document.startswith(FORMAT_MARKER)
+        dictionaried += render.DICT_PREFIX in document
 
     # Sweep 2: keys the format cannot express. Degrading is the correct answer;
     # crashing or losing data is not.
@@ -479,14 +584,22 @@ def main():
             failures.append(("random/awkward-keys", seed, shrink_safe(payload)))
             break
 
-    fixed = len(MUST_TABULATE) + len(MAY_DEGRADE)
+    fixed = (len(MUST_TABULATE) + len(MAY_DEGRADE)
+             + len(MUST_DICTIONARY) + len(MUST_NOT_DICTIONARY))
     # The tabulated count is printed because a run where nothing tabulated would
     # pass while testing only json.dumps — a green result that means nothing.
     # If it ever reads 0, the generator is broken, not the compressor.
     print(f"property test: {fixed} fixed cases, {trials} safe-key trials "
-          f"({tabulated} built a table), {trials // 4} awkward-key trials, seed {seed}")
+          f"({tabulated} built a table, {dictionaried} built a #dict), "
+          f"{trials // 4} awkward-key trials, seed {seed}")
     if tabulated == 0:
         print("  WARNING: no trial built a table — the random sweep proved nothing")
+    # Same reasoning one encoding down. Every other value family draws from a
+    # wide range, so without the "few" family no generated column would repeat
+    # often enough to earn a dictionary and the sweep would test the new encoder
+    # zero times while reporting success.
+    if dictionaried == 0:
+        print("  WARNING: no trial built a #dict — the dictionary encoder is untested here")
 
     if not failures:
         print("0 failure(s)")

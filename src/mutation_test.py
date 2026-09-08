@@ -48,12 +48,18 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 class Mutation:
     """One deliberate break, and the check that has to notice it."""
 
-    def __init__(self, name, path, old, new, must_fail):
+    def __init__(self, name, path, old, new, must_fail, gate="cli_test.py"):
         self.name = name
         self.path = path      # relative to the repo root
         self.old = old        # exact text to replace; must be present
         self.new = new
-        self.must_fail = must_fail  # substring of the check name that must fail
+        self.must_fail = must_fail  # substring of the failure line that must appear
+        # Which gate is supposed to catch it. Format-level behaviour is guarded
+        # by property_test.py and stream-level behaviour by cli_test.py, so
+        # running one file for every mutation reports a hole that is really a
+        # mutation pointed at the wrong gate — which is how the two dictionary
+        # mutations first came back SURVIVED.
+        self.gate = gate
 
 
 MUTATIONS = [
@@ -120,6 +126,31 @@ MUTATIONS = [
         'if False:',
         "compress.py entry point",
     ),
+    # Format-level, so guarded by property_test.py rather than cli_test.py.
+    Mutation(
+        "dictionary encoding is switched off",
+        "src/table.py",
+        "    dictionaries = dictionary_columns(varying_rows)",
+        "    dictionaries = {}",
+        "MUST_DICTIONARY",
+        gate="property_test.py",
+    ),
+    Mutation(
+        "the #dict line is written but the cells are never indexed",
+        "src/table.py",
+        "    varying_rows = remove_dictionaries(varying_rows, dictionaries)",
+        "    varying_rows = varying_rows",
+        "MUST_DICTIONARY",
+        gate="property_test.py",
+    ),
+    Mutation(
+        "a dictionary merges values Python calls equal (0 with 0.0)",
+        "src/table.py",
+        "        if not any(_same_value(value, seen) for seen in distinct):",
+        "        if not any(value == seen for seen in distinct):",
+        "MUST_DICTIONARY",
+        gate="property_test.py",
+    ),
     Mutation(
         "bin/margin loses its symlink-resolution loop",
         "bin/margin",
@@ -159,11 +190,11 @@ def surviving(mutation):
         with open(target, "w", encoding="utf-8") as f:
             f.write(source.replace(mutation.old, mutation.new, 1))
 
-        done = subprocess.run([sys.executable, os.path.join(tree, "src", "cli_test.py")],
+        done = subprocess.run([sys.executable, os.path.join(tree, "src", mutation.gate)],
                               capture_output=True, text=True, check=False)
 
         if done.returncode == 0:
-            return "the gate passed — nothing noticed"
+            return f"{mutation.gate} passed — nothing noticed"
 
         # Not just "something failed": the check NAMED for this behaviour has to
         # be the one that failed. Otherwise a mutation that happens to break an
@@ -175,8 +206,8 @@ def surviving(mutation):
     return None
 
 
-def baseline_passes():
-    """Does the gate pass on an unmutated copy?
+def baseline_passes(gates):
+    """Does every gate pass on an unmutated copy?
 
     Without this the whole file is decoration, and it took about ninety seconds
     to prove it: shrinking the CLI test's pipe fixture back under the buffer
@@ -187,26 +218,33 @@ def baseline_passes():
     That is instance seven of the habit this file was written to end, found in
     the file itself. Which is the argument for the file: the check is cheap, and
     the mistake is apparently not one I stop making by intending to.
+
+    Every gate any mutation targets, not just one: once mutations can name their
+    own gate, a red property_test.py would hand every dictionary mutation a free
+    "caught" while cli_test.py sat green — the same hole, one gate along.
     """
     with tempfile.TemporaryDirectory() as tree:
         for directory in ("src", "bin"):
             shutil.copytree(os.path.join(REPO, directory), os.path.join(tree, directory),
                             ignore=shutil.ignore_patterns("__pycache__"))
-        done = subprocess.run([sys.executable, os.path.join(tree, "src", "cli_test.py")],
-                              capture_output=True, text=True, check=False)
-        return done.returncode == 0, done.stdout
+        for gate in sorted(gates):
+            done = subprocess.run([sys.executable, os.path.join(tree, "src", gate)],
+                                  capture_output=True, text=True, check=False)
+            if done.returncode != 0:
+                return False, f"{gate}:\n{done.stdout}"
+    return True, ""
 
 
 def main():
     print(f"Mutation coverage — {len(MUTATIONS)} deliberate breaks\n")
 
-    clean, output = baseline_passes()
+    clean, output = baseline_passes({m.gate for m in MUTATIONS})
     if not clean:
-        print("  the gate is RED before any mutation — these results would be meaningless.")
+        print("  a gate is RED before any mutation — these results would be meaningless.")
         for line in output.splitlines():
             if line.strip().startswith("FAIL"):
                 print(f"    {line.strip()}")
-        print("\nFix the CLI contract first, then re-run.")
+        print("\nFix that gate first, then re-run.")
         return 1
 
     # In parallel: each one runs the whole CLI gate (about two seconds), and

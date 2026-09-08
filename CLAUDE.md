@@ -99,9 +99,14 @@ a real defect.
   round.
 
 ## Where things stand
-The compressor is done and merged (PR #1). Eight payloads from eight APIs, 121,569 → 75,066 tokens
-(**38.3%**), worst case 0.0% — nothing ever comes out larger than it went in. Per-payload numbers
+The compressor is done and merged (PR #1). Eight payloads from eight APIs, 121,569 → 70,771 tokens
+(**41.8%**), worst case 0.0% — nothing ever comes out larger than it went in. Per-payload numbers
 and the shapes behind them are in `docs/shapes.md`.
+
+`#dict` (2026-09-09) closed the gap `#const` left: a column drawn from a handful of repeated values
+is stated once and indexed. Worth 4,295 tokens — GitHub 53.1% → 55.4%, GraphQL countries 11.3% →
+**35.7%**. It also disproved this file's own claim that structural compression was nearly
+exhausted, which had never been measured.
 
 **It is now a tool you can actually use** (2026-09-09): `curl ... | margin | pbcopy`. Reads a path
 or stdin, document on stdout and everything else on stderr, and "returned the input unchanged"
@@ -113,15 +118,20 @@ never seen an argument, a stream or an exit code, and `margin f.json | head -1` 
 at a document — printed a BrokenPipeError traceback (Rule 11). A "skip when there's no .venv" in
 the new test turned out to be the *only* branch pre-commit could ever take (Rule 12).
 
-## The fork after that (do not start it without deciding)
+## The fork after that (weighed 2026-09-09, still deferred)
 82% of `github_issues.json`'s output is `body` prose, which no rule compresses losslessly. Going
 further means a reversible store the model can query — which turns Margin from a text filter into a
 **tool the model calls**, reversing "no proxy server, not yet" above. Worth ~92% on GitHub.
 
-Decide it against the eight payloads in `docs/shapes.md`, not the two that existed when it was
-first raised, and decide it after actually using the CLI. **The CLI now exists — so the remaining
-precondition is use, not code.** Run it on real payloads for a while first; what it turns out to
-need daily is the evidence this decision was deliberately made to wait for.
+`docs/shapes.md` said to decide it against all eight payloads rather than the two that existed when
+it was first raised. Measured: prose is 82% of `github_issues`, 13% of `hn_stories`, 8% of
+`jsonplaceholder`, and **0% of the other five**. 86% of all the prose in the sample set sits in one
+payload, so the fork targets a problem seven of eight payloads do not have — a much weaker case
+than "~92% on GitHub" sounds, and it still reverses a standing decision.
+
+Deferred again, and the remaining precondition is unchanged and unmet: **use**. Run `margin` on
+real payloads for a while. What it turns out to need daily is the evidence this decision was
+deliberately made to wait for — not another round of measuring the same eight files.
 
 ## Open TODOs
 - [ ] Nothing harness-level.

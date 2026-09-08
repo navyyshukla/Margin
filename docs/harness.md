@@ -325,3 +325,26 @@ Two details it needs, both learned immediately by getting them wrong:
   itself within about ninety seconds of writing it — which is the argument for
   the file. The check is cheap and the mistake is evidently not one that
   intending to avoid it avoids.
+- **A mutation must name the gate that guards it**, and the baseline must then
+  check every gate any mutation names. Once format-level mutations went to
+  `property_test.py` while stream-level ones went to `cli_test.py`, checking one
+  file's baseline would have handed every dictionary mutation a free "caught"
+  while the other gate sat green. The same hole, one gate along.
+
+### It worked, the next day
+
+`#dict` shipped less than a day later, and the gate caught the failure mode it
+was built for, in a form nobody would have predicted: **a compression
+improvement broke a test by making its fixture too small.**
+
+`cli_test.py`'s two closed-pipe checks fed an 8,000-row payload chosen to render
+past the 64KB pipe buffer. `#dict` collapsed its low-cardinality column to
+indices, the document dropped under the buffer, the pipe stopped closing under
+the writer, and SIGPIPE stopped firing. Both checks went red immediately.
+
+Nothing was wrong with the code. The fixture had stopped reaching its subject —
+which is exactly instance five and six, arriving from a direction no reviewer
+had flagged and no author would have thought to re-check. The fix was a fixture
+of unique per-row strings that no compression rule can factor out, plus an
+assertion on the premise itself: **the document must exceed the pipe buffer**,
+checked rather than assumed.

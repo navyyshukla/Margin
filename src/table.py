@@ -15,6 +15,15 @@ eval questions depend on the difference — after boilerplate stripping, a PR's
 key at all, which is exactly how Q4 and Q10 tell them apart.
 """
 
+import json
+
+from tokens import token_count
+# This file had no imports at all until dictionary_columns needed to compare two
+# encodings in tokens rather than in characters — the standing rule is that a
+# threshold is measured, and a character count is a proxy, not a measurement.
+# token_count lives in tokens.py rather than compress.py because compress.py
+# imports this file.
+
 MISSING = object()  # sentinel: this row had no such key (never appears in JSON)
 
 # Nested dicts become dotted columns: {"user": {"login": x}} -> "user.login".
@@ -339,6 +348,155 @@ def restore_constants(flat_rows, constants):
     return [{**row, **constants} for row in flat_rows]
 
 
+MIN_DICT_SAVING = 20
+# Tokens. A dictionary must beat the cells it replaces by at least this much or
+# it is not built.
+#
+# Derived 2026-09-09 by measuring every candidate column across the eight
+# payloads. The savings land in two groups with nothing between them:
+#
+#   +1369  graphql_countries.languages          -8   pokeapi_ditto.game_index
+#    +801  github_issues.labels                 -10  github_issues.reactions.+1
+#     +95  graphql_countries.continent.name     -55  hn_stories.author
+#     +25  github_issues.author_association     -291 graphql_countries.currency
+#                                               -544 graphql_countries.capital
+#
+# Any threshold in (-8, +25] produces the same four dictionaries on this data,
+# so the exact number is not load-bearing. It is positive rather than zero
+# because a dictionary that merely breaks even still costs the reader a lookup,
+# and 20 rather than 25 to leave a little room under the smallest real win.
+#
+# In tokens, not a percentage, and that is the point of the unit. A dictionary's
+# cost is nearly fixed — the values once, plus a couple of tokens of index per
+# row — while its saving scales with how long the values are. A percentage gate
+# would accept a column saving 4 tokens of 8 and reject one saving 900 of 4,000.
+#
+# Deliberately NOT a distinct-count ratio, which was the obvious heuristic and
+# is wrong twice over on this data: languages is 126 distinct across 250 rows
+# and the biggest win in the set, while capital is 245 distinct across 250 and
+# the biggest loss. Only pricing both encodings separates them.
+
+
+def dictionary_columns(flat_rows):
+    """Columns worth replacing with an index into a list of their distinct values.
+
+    The gap `constant_columns` leaves. A column whose value never changes is
+    stated once on #const; a column drawn from a handful of values repeated in
+    no particular order has nothing to state and pays full price per row —
+    github_issues repeats two distinct `reactions` objects across 30 rows for
+    1,320 tokens, and graphql_countries repeats seven continents across 250.
+
+    Returns {column: [distinct values, first-seen order]}, empty when nothing
+    clears MIN_DICT_SAVING.
+
+    Decided by measuring both encodings, never by counting distinct values.
+    graphql_countries' `languages` is 126 distinct across 250 rows — a ratio
+    that looks hopeless — and still saves ~1,000 tokens, because each value is a
+    long list of objects. This is the same rule MIN_TABLE_SAVING follows:
+    compare against the output you would otherwise emit, not against a proxy
+    for it.
+    """
+    dictionaries = {}
+    for key in _ordered_column_names(flat_rows):
+        values = [row[key] for row in flat_rows if key in row and row[key] is not None]
+        if len(values) < 2:
+            continue
+
+        distinct = _distinct_values(values)
+        # One distinct value is a constant. It only reaches here when the column
+        # is absent from some row or null in another — constant_columns requires
+        # presence in every row — and a one-entry dictionary saves nothing while
+        # claiming to the reader that there is a choice being made.
+        if len(distinct) < 2 or len(distinct) == len(values):
+            continue
+
+        if _cells_cost(values) - _dictionary_cost(key, distinct, values) >= MIN_DICT_SAVING:
+            dictionaries[key] = distinct
+    return dictionaries
+
+
+def _distinct_values(values):
+    """The distinct values, in first-seen order, compared with same_json.
+
+    Not a set, and not ==. Values here can be dicts and lists, which are
+    unhashable, and Python's == would merge True with 1 and 0 with 0.0 — a
+    dictionary that did so would hand every row after the first the wrong type,
+    exactly the way #const once did (Rule 9).
+    """
+    distinct = []
+    for value in values:
+        if not any(_same_value(value, seen) for seen in distinct):
+            distinct.append(value)
+    return distinct
+
+
+def _cells_cost(values):
+    """What these values cost written out once per row, as they are today.
+
+    Uses the real encoder, imported here rather than at the top because
+    render.py imports this module. Priced with json.dumps first, which was
+    wrong in the direction that matters: a `str` cell is written bare, so "x"
+    costs one token in the document and three as JSON. Over-charging the status
+    quo makes every dictionary look better than it is, and a column of "x"/"y"
+    got one — a dictionary that cost more than the cells it replaced, which is
+    the single thing MIN_DICT_SAVING exists to prevent.
+
+    Rule 4, in the form it takes for a threshold: the gate has to price the
+    output the encoder will actually produce, not a stand-in for it.
+    """
+    from render import encode_cell
+
+    type_name = column_type_name(values)
+    return sum(token_count(encode_cell(v, type_name)) for v in values)
+
+
+def _dictionary_cost(key, distinct, values):
+    """What they would cost as a #dict entry plus one index per row.
+
+    Counts the key name and the JSON punctuation as well as the values: the
+    #dict line is text in the document like any other, and a gate that ignored
+    its own overhead would approve dictionaries that lose.
+    """
+    entry = json.dumps({key: distinct}, separators=(",", ":"))
+    # Index tokens scale with how many rows there are, not how many distinct
+    # values, so charge the average index cost to every row.
+    per_row = sum(token_count(str(index)) for index in range(len(distinct))) / len(distinct)
+    return token_count(entry) + round(per_row * len(values))
+
+
+def remove_dictionaries(flat_rows, dictionaries):
+    """Replace each dictionary column's values with its index into the list.
+
+    None is left alone rather than given an index. It already has a one-token
+    encoding (\\N) that no index beats, and keeping it out means a nullable
+    column stays readable as "null or a lookup" instead of hiding null inside
+    the dictionary where the header's `?` no longer explains it.
+    """
+    replaced = []
+    for row in flat_rows:
+        new_row = dict(row)
+        for key, distinct in dictionaries.items():
+            if key in new_row and new_row[key] is not None:
+                new_row[key] = next(
+                    index for index, value in enumerate(distinct)
+                    if _same_value(new_row[key], value)
+                )
+        replaced.append(new_row)
+    return replaced
+
+
+def restore_dictionaries(flat_rows, dictionaries):
+    """Inverse of remove_dictionaries: index back to the value it stands for."""
+    restored = []
+    for row in flat_rows:
+        new_row = dict(row)
+        for key, distinct in dictionaries.items():
+            if key in new_row and new_row[key] is not None:
+                new_row[key] = distinct[new_row[key]]
+        restored.append(new_row)
+    return restored
+
+
 def build_table(rows, array_path=(), wrapper=None, key_column=None):
     """Rows of JSON objects -> the table shape that src/render.py writes out.
 
@@ -351,6 +509,12 @@ def build_table(rows, array_path=(), wrapper=None, key_column=None):
     constants = constant_columns(flat_rows)
     varying_rows = remove_constants(flat_rows, constants)
 
+    # Chosen on the varying rows, so a column already factored out as constant
+    # is never considered — and computed before the cells are indexed, because
+    # after that the values are integers and the choice cannot be made.
+    dictionaries = dictionary_columns(varying_rows)
+    varying_rows = remove_dictionaries(varying_rows, dictionaries)
+
     column_names = _ordered_column_names(varying_rows)
 
     columns = []
@@ -358,7 +522,12 @@ def build_table(rows, array_path=(), wrapper=None, key_column=None):
         values = [row[name] for row in varying_rows if name in row]
         columns.append({
             "name": name,
-            "type": column_type_name(values),
+            # Declared "dict" rather than the "int" the indices now look like.
+            # encode_cell and decode_cell dispatch on the declared type, so the
+            # type is what tells the decoder to look the value up instead of
+            # handing back an integer — and what tells the reader the same
+            # thing. Rule 4: inverses must key off one source of truth.
+            "type": "dict" if name in dictionaries else column_type_name(values),
             "nullable": (
                 len(values) < len(varying_rows)
                 or any(value is None for value in values)
@@ -375,6 +544,9 @@ def build_table(rows, array_path=(), wrapper=None, key_column=None):
         "columns": columns,
         "cells": cells,
         "constants": constants,
+        # {column: [distinct values]} for every column whose cells are now
+        # indices into that list. Empty when no column earned one.
+        "dictionaries": dictionaries,
         "array_path": list(array_path),
         # Non-None when the records came from a dict rather than a list: names
         # the column holding what used to be the dict key. rebuild_rows leaves
@@ -401,6 +573,10 @@ def rebuild_rows(table):
         for row in table["cells"]
     ]
 
+    # Dictionaries first: the indices have to become values again before the
+    # constants are merged back, because build_table chose the dictionaries
+    # after removing the constants and an inverse runs in reverse order.
+    varying_rows = restore_dictionaries(varying_rows, table.get("dictionaries") or {})
     flat_rows = restore_constants(varying_rows, table["constants"])
     return [unflatten_row(row) for row in flat_rows]
 
