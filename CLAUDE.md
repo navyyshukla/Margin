@@ -56,17 +56,21 @@ Run `./.githooks/install.sh` once per clone — it copies the hooks into `.git/h
 - **`.claude/hooks/run_eval.sh`** (wired in `.claude/settings.json`) — runs both after any Claude
   edit to `src/*.py` and exits 2 on failure, so a regression surfaces mid-session.
 
-**`docs/harness.md` is the rulebook — read it before changing the format.** Six rules, each
-recorded with the failure that bought it. The two that catch people repeatedly:
+**`docs/harness.md` is the rulebook — read it before changing the format.** Ten rules, each
+recorded with the failure that bought it. The three that catch people repeatedly:
 
 - A test of the format must assert the format was *used*. `compress_json` falls back to plain JSON
   when its own round-trip fails, so a completely broken encoder still passes a naive round-trip
   check. Both tests were worthless until they checked the notes.
-- Round-trip equality cannot see a lie in the *header*. What the document claims to the reader
-  needs a check aimed at the claim, not at the data.
+- Round-trip equality cannot see a lie in the *header*, or *which* array was chosen. What the
+  document claims to the reader needs a check aimed at the claim, not at the data.
+- `==` is not equality for JSON. Python says `True == 1` and `0 == 0.0`, so a document that decoded
+  ints as floats compared equal and shipped. Use `table.same_json` everywhere.
 
-Re-run the cold read (`docs/cold-read-2026-09-08.md`) whenever a **new cell encoding** is added —
-that is precisely what a reader cannot infer and no automated gate can see.
+Re-run the cold read whenever a **new cell encoding or format line** is added — that is precisely
+what a reader cannot infer and no automated gate can see. Two runs so far,
+`docs/cold-read-2026-09-08.md` and `-08b.md`; both scored every answer correct and both still found
+a real defect.
 
 ## The `development` → `main` gate (exercised, not just described)
 - [x] **PR-review gate.** The pre-commit hook blocks direct commits to `main`; the review step is
@@ -77,9 +81,30 @@ that is precisely what a reader cannot infer and no automated gate can see.
   every stage so far has had at least one real defect that only a reader found, whether that reader
   was the code reviewer or the cold-read model.
 
+## Where things stand
+The compressor is done and merged (PR #1). Eight payloads from eight APIs, 121,569 → 75,066 tokens
+(**38.3%**), worst case 0.0% — nothing ever comes out larger than it went in. Per-payload numbers
+and the shapes behind them are in `docs/shapes.md`.
+
+## Next phase: make it usable (decided 2026-09-09)
+Nothing consumes the compressor. It is `python src/compress.py f.json > out.txt`, and the result
+gets opened, copied and pasted by hand — while the stated purpose is "shrinks the JSON API
+responses I paste into LLM conversations". The library is proven; the tool around it does not exist.
+
+Roughly: read stdin as well as a path, write to stdout cleanly (notes already go to stderr, so
+`curl ... | margin | pbcopy` should just work), and a `margin` entry point that does not require
+knowing where the repo lives. Small, and it reverses no decision.
+
+Deliberately **before** the big fork, not after: using the thing daily is how you find out what it
+actually needs, and the next decision is expensive to unmake.
+
+## The fork after that (do not start it without deciding)
+82% of `github_issues.json`'s output is `body` prose, which no rule compresses losslessly. Going
+further means a reversible store the model can query — which turns Margin from a text filter into a
+**tool the model calls**, reversing "no proxy server, not yet" above. Worth ~92% on GitHub.
+
+Decide it against the eight payloads in `docs/shapes.md`, not the two that existed when it was
+first raised, and decide it after actually using the CLI.
+
 ## Open TODOs
-- [ ] Nothing harness-level. The next decision is a product one: 82% of `github_issues.json`'s
-      output is `body` prose, which no rule compresses losslessly. Going further means a reversible
-      store the model can query, which turns Margin from a text filter into a tool the model calls
-      — reversing "no proxy server, not yet" above. Decide it against the eight payloads now in
-      `docs/shapes.md`, not the two that existed when it was first raised.
+- [ ] Nothing harness-level.
