@@ -33,6 +33,17 @@ esac
 # missing this is a fresh checkout, not a regression. Say so, don't fail.
 [ -x "$PYTHON" ] || { echo "eval harness skipped: no .venv (run: uv venv .venv)"; exit 0; }
 
+# Runs first, and without a sample payload: it generates its own, so it is the
+# one gate that still works on a fresh checkout where the samples are absent.
+# It also asks a different question from the harness — the harness asks whether
+# two known payloads keep their answers, this asks whether the format survives
+# shapes nobody thought to write down.
+if ! output=$("$PYTHON" "$PROJECT_DIR/src/property_test.py" 2>&1); then
+  echo "property test FAILED after editing $file_path" >&2
+  echo "$output" >&2
+  exit 2
+fi
+
 ran=0
 for sample in "${SAMPLES[@]}"; do
   # Samples are gitignored real API payloads, so a fresh checkout has none.

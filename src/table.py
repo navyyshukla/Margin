@@ -67,13 +67,24 @@ def _is_record_list(value):
     )
 
 
-def flatten_row(row, depth=MAX_FLATTEN_DEPTH):
+def flatten_row(row, depth=None):
     """Nesting becomes dotted keys: {"user": {"login": x}} -> {"user.login": x}.
 
-    Descends up to `depth` levels. A nested dict is only flattened when it can
-    be put back together unambiguously — see can_flatten. Anything else, and
-    anything past the depth limit, stays whole in one cell.
+    Descends up to `depth` levels, defaulting to MAX_FLATTEN_DEPTH. A nested
+    dict is only flattened when it can be put back together unambiguously — see
+    can_flatten. Anything else, and anything past the depth limit, stays whole
+    in one cell.
+
+    The default is read here rather than written as `depth=MAX_FLATTEN_DEPTH` in
+    the signature, where Python would bind it once at import. This project's
+    whole method is to re-measure thresholds, so someone will eventually set
+    table.MAX_FLATTEN_DEPTH = 3 to see what it buys — and with an import-time
+    default that experiment silently keeps running at depth 2 and reports a
+    number that means nothing.
     """
+    if depth is None:
+        depth = MAX_FLATTEN_DEPTH
+
     flat = {}
     for key, value in row.items():
         if depth > 0 and can_flatten(key, value):
@@ -122,6 +133,15 @@ def unflatten_row(flat):
             row[key] = value
 
     for parent, children in nested.items():
+        if parent in row:
+            # "a" and "a.b" both present: the document wants a scalar and a dict
+            # at the same key. Assigning would silently discard whichever came
+            # first — and this function is also the standalone decompressor's
+            # path, where there is no round-trip check downstream to notice.
+            # Raising sends it to compress.py's fallback with a note instead.
+            raise ValueError(
+                f"cannot rebuild {parent!r}: present as both a value and a parent"
+            )
         row[parent] = unflatten_row(children)
     return row
 
@@ -153,13 +173,25 @@ def constant_columns(flat_rows):
 
 
 def _same_value(a, b):
-    """Equality that does not treat True as 1 or False as 0.
+    """Equality that does not treat True as 1 or False as 0, at any depth.
 
     Python says True == 1 and False == 0, so a column holding True in one row
     and 1 in another would look constant and decompress to the wrong type.
+
+    The check has to recurse, because scalar arrays are now a column shape in
+    their own right: [True] == [1] under plain equality, so a children-style
+    column holding [True] in one row and [1] in another collapsed into #const
+    and gave row two the wrong type. The whole-payload round-trip check caught
+    it and fell back to JSON, so nothing was ever corrupted — but this function
+    is the one claiming to prevent the confusion, so it should actually prevent
+    it rather than leave it to the net below.
     """
     if isinstance(a, bool) != isinstance(b, bool):
         return False
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(_same_value(x, y) for x, y in zip(a, b))
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(_same_value(a[k], b[k]) for k in a)
     return a == b
 
 
@@ -311,6 +343,19 @@ def scalar_array_type(arrays):
     An unsorted int column keeps `ints`, where deltas could be larger than the
     values they replace.
     """
+    if not any(arrays):
+        # Every array in the column is empty, so there is no evidence of what it
+        # holds — and `all(...)` over no elements is vacuously true, which would
+        # hand the most exotic type, dints, to the column with the least
+        # justification for it. hn_stories.json shipped exactly that: Algolia's
+        # `matchedWords` is an array of strings, always empty in this sample, and
+        # the header declared it `dints?`. Every cell round-tripped (they are all
+        # \A), so no test caught it — but the document told the reading model
+        # that a string column holds delta-encoded integers, which is the failure
+        # the #legend line exists to prevent. Staying `json` costs nothing: `[]`
+        # and `\A` are both two characters.
+        return None
+
     if all(
         all(isinstance(item, int) and not isinstance(item, bool) for item in array)
         for array in arrays

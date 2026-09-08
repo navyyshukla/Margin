@@ -61,7 +61,14 @@ ARRAY_TYPES = ("ints", "dints", "strs")
 
 LEGEND_ENTRIES = [
     # (what to look for, what to say). Order is the order they are printed.
-    ("dints", "col:dints = ints as first-value-then-differences (10 3 2 -> 10,13,15)"),
+    #
+    # Wording tuned by the cold read of 2026-09-08 (docs/cold-read-2026-09-08.md).
+    # The reader got every answer right but had to *infer* two things: that the
+    # first dints token is absolute rather than a delta from zero, and that an
+    # empty cell means the key is absent — which is the distinction Q4/Q10 use to
+    # tell pull requests from plain issues, so leaving it to inference is not
+    # acceptable. Both are now stated.
+    ("dints", "col:dints = ints as first-value-then-differences, first is absolute (10 3 2 -> 10,13,15)"),
     ("ints", "col:ints/strs = space-separated list"),
     ("strs", "col:ints/strs = space-separated list"),
     (NULL_CELL, r"\N = null"),
@@ -70,7 +77,7 @@ LEGEND_ENTRIES = [
 ]
 
 
-def legend_for(table):
+def legend_for(table, encoded_rows):
     """The one-line key to any non-obvious encoding this document actually uses.
 
     Token savings are worthless if the reader misreads the result, and `dints`
@@ -82,28 +89,47 @@ def legend_for(table):
     named header) or spelled out in the header itself, so the legend covers only
     the encodings that cannot be guessed. Entries are emitted only when the
     document contains them — a payload with no arrays pays nothing for arrays.
-    Measured 2026-09-08: 58 tokens on hn_stories.json, 0.3% of the document.
+    Measured 2026-09-08: 44 tokens on hn_stories.json, 7 on github_issues.json.
+
+    Takes the already-encoded rows rather than re-encoding: the cells are the
+    expensive part of rendering (every `children` array gets delta-encoded), and
+    sniffing them a second time doubled that cost for nothing.
+
+    Sentinels are matched per cell and in full, never as a substring of the
+    document. A `str` value beginning with a backslash is escaped by doubling
+    it, so "\\Name" becomes the cell `\\\\Name` — which *contains* `\\N` while
+    meaning nothing of the sort, and a substring test put "\\N = null" in the
+    legend of a document with no nulls in it.
     """
     types = {column["type"] for column in table["columns"]}
-    body = "\n".join(
-        encode_cell(value, column["type"])
-        for row in table["cells"]
-        for value, column in zip(row, table["columns"])
-    )
+    cells = {cell for row in encoded_rows for cell in row}
 
     seen = []
     for marker, description in LEGEND_ENTRIES:
-        present = marker in types if marker in ARRAY_TYPES else marker in body
+        present = marker in types if marker in ARRAY_TYPES else marker in cells
         if present and description not in seen:
             seen.append(description)
+
+    # Stated whenever any cell is empty, and separately from the sentinels
+    # because it is the absence of a marker rather than a marker — the one thing
+    # in the format with nothing visible to point at.
+    if any(cell == "" for row in encoded_rows for cell in row):
+        seen.append("empty cell = key absent in that row")
+
     return "; ".join(seen)
 
 
 def render(table):
     """Turn the table shape into the `#margin/v1` document."""
+    types = [column["type"] for column in table["columns"]]
+    encoded_rows = [
+        [encode_cell(value, type_name) for value, type_name in zip(row, types)]
+        for row in table["cells"]
+    ]
+
     lines = [FORMAT_MARKER]
 
-    legend = legend_for(table)
+    legend = legend_for(table, encoded_rows)
     if legend:
         lines.append(LEGEND_PREFIX + legend)
 
@@ -125,12 +151,8 @@ def render(table):
 
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")
-    types = [column["type"] for column in table["columns"]]
-    for row in table["cells"]:
-        writer.writerow([
-            encode_cell(value, type_name)
-            for value, type_name in zip(row, types)
-        ])
+    for row in encoded_rows:
+        writer.writerow(row)
 
     return "\n".join(lines) + "\n" + buffer.getvalue()
 
@@ -170,6 +192,12 @@ def parse(text):
     # line" and "one row" are not the same thing.
     csv_text = "\n".join(lines[index:])
     cells = []
+    if not columns:
+        # Every column was constant, so each row rendered as an empty line — and
+        # an empty line is indistinguishable from the trailing newline skipped
+        # below. The count in the header is the only surviving record of how
+        # many rows there were, which is what makes it worth writing down.
+        cells = [[] for _ in range(count)]
     for row in csv.reader(io.StringIO(csv_text)):
         if not row:
             continue  # trailing newline at end of document
@@ -194,6 +222,15 @@ def parse_header(line):
     count = int(line[1:close_bracket])
 
     inner = line[line.index("{") + 1:line.rindex("}")]
+    if not inner:
+        # `[N]{}` — every column turned out constant, so the table is a row
+        # count and nothing else. "".split(",") gives [""], which then fails to
+        # split on ":", so this needs its own case. Depth-2 flattening made it
+        # reachable: more columns get opened up, so more of them can be
+        # constant, and the whole payload silently lost its table when they all
+        # were.
+        return count, []
+
     columns = []
     for spec in inner.split(","):
         name, type_name = spec.rsplit(":", 1)
@@ -216,6 +253,20 @@ def encode_cell(value, type_name=None):
         return ""
     if value is None:
         return NULL_CELL
+    if type_name == "json":
+        # A "json" column is the mixed-type column: its values have no single
+        # Python type, so the ONLY thing decode_cell can do is json.loads. That
+        # forces every value here to be written as JSON, strings included.
+        #
+        # Dispatching on the value's own type instead — which is what the rest
+        # of this function does — silently disagrees with the decoder. A string
+        # "a,b" was written bare and crashed json.loads on the way back; worse,
+        # the string "true" was written as `true` and read back as the boolean,
+        # and "3.0" as the float. The round-trip check caught both and fell back
+        # to JSON, so no data was ever lost, but any payload with a mixed column
+        # containing strings lost its table entirely — and mixed columns are
+        # common in real APIs. Found by src/property_test.py, 2026-09-08.
+        return json.dumps(value, separators=(",", ":"))
     if isinstance(value, bool):
         # Checked before int: in Python, True is an int.
         return "true" if value else "false"

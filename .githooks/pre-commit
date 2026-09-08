@@ -35,6 +35,18 @@ SAMPLES=(
 # neither. Missing inputs are not a regression — say so and allow the commit.
 [ -x "$PYTHON" ] || { echo "pre-commit: eval harness skipped (no .venv)"; exit 0; }
 
+# The property test needs no sample payload — it generates its own — so unlike
+# the harness it still runs on a fresh checkout, where the gitignored samples
+# are absent. That makes it the only gate a clone starts with.
+echo "pre-commit: running property test..."
+if ! "$PYTHON" "$repo_root/src/property_test.py"; then
+  echo "" >&2
+  echo "pre-commit: property test failed — commit refused." >&2
+  echo "  The format broke on a generated payload. The printed payload is" >&2
+  echo "  shrunk; paste it into MUST_TABULATE or MAY_DEGRADE once fixed." >&2
+  exit 1
+fi
+
 for sample in "${SAMPLES[@]}"; do
   [ -f "$sample" ] || continue
   echo "pre-commit: running eval harness on $(basename "$sample")..."
