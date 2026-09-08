@@ -27,6 +27,7 @@ Run: python src/cli_test.py
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -96,6 +97,32 @@ TABULATES = json.dumps(repeated(["kept", "together"], ["and", "apart"], rows=40)
 # miniature and it is the case a do-nothing CLI passes by accident.
 UNCHANGED = json.dumps({"hourly": {"time": list(range(50)), "temp": [1.5] * 50}},
                        separators=COMPACT)
+
+# For the closed-pipe checks only, and the size is the whole point. TABULATES
+# compresses to 665 bytes, which fits entirely in the 64KB pipe buffer — the
+# writer finishes and exits 0 before `head -1` ever closes the pipe, so SIGPIPE
+# never fires and the checks named for it passed with the handler deleted.
+# 8,000 rows render to ~139KB, past the buffer, so the write actually blocks and
+# the signal actually arrives. Measured, not guessed.
+PIPE_FILLING = json.dumps(repeated(["kept", "together"], ["and", "apart"], rows=8000),
+                          separators=COMPACT)
+
+
+def nested(levels):
+    """`[[[...]]]` — the shape that blows a recursion limit."""
+    return b"[" * levels + b"]" * levels
+
+
+# TWO pathological payloads, because there are two recursions in the pipeline
+# and the first one to blow stops the other from ever running. json.loads copes
+# with roughly 3x the recursion limit before its C scanner gives up, so:
+PARSES_THEN_CRASHES = nested(sys.getrecursionlimit() * 3)  # dies in compress_json
+CRASHES_IN_PARSER = nested(sys.getrecursionlimit() * 10)   # dies in detect_content_type
+#
+# One number covered one half. At 3,000 the guard around compress_json was
+# exercised and the parse was not, which is how a RecursionError from json.loads
+# shipped; raising it to 10,000 to catch that swapped which half was tested,
+# and moving compress_json back outside the guard still passed every check.
 
 
 def main():
@@ -212,18 +239,38 @@ def main():
     # `margin f.json | head -1` is how you look at a document, and it used to
     # print a BrokenPipeError traceback under the output. A traceback on stderr
     # is not cosmetic here: it is the stream the notes live on.
-    reader = subprocess.Popen(["head", "-1"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL)
-    writer = subprocess.Popen([sys.executable, CLI], stdin=subprocess.PIPE,
-                              stdout=reader.stdin, stderr=subprocess.PIPE)
-    reader.stdin.close()
-    writer.stdin.write(TABULATES.encode())
-    writer.stdin.close()
-    pipe_err = writer.stderr.read()
-    writer.wait()
-    reader.wait()
-    check("closed pipe (| head -1): no traceback on stderr",
-          b"Traceback" not in pipe_err and b"BrokenPipe" not in pipe_err,
-          f"stderr={pipe_err[-200:]!r}")
+    def through_head(argv):
+        """Run argv, feed it PIPE_FILLING, and let `head -1` walk away.
+
+        Returns (exit code, first line the reader got, stderr).
+        """
+        reader = subprocess.Popen(["head", "-1"], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE)
+        writer = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=reader.stdin,
+                                  stderr=subprocess.PIPE)
+        reader.stdin.close()
+        try:
+            writer.stdin.write(PIPE_FILLING.encode())
+            writer.stdin.close()
+        except BrokenPipeError:
+            pass  # margin can die before it has read all of its own input
+        err = writer.stderr.read()
+        first_line = reader.stdout.read()
+        writer.wait()
+        reader.wait()
+        return writer.returncode, first_line, err
+
+    code, first_line, pipe_err = through_head([sys.executable, CLI])
+    # Assert the SIGNAL, not just the absence of a traceback. "No traceback" is
+    # also true of a run where the pipe was never closed under the writer, which
+    # is exactly what happened while this check used a 665-byte document: it fit
+    # the buffer, margin finished and exited 0, and the check passed with
+    # die_on_broken_pipe() gutted to `pass`. Dying on SIGPIPE is the behaviour,
+    # so the exit status is the thing to check.
+    check("closed pipe (| head -1): dies on SIGPIPE, no traceback",
+          code == -signal.SIGPIPE and b"Traceback" not in pipe_err
+          and b"BrokenPipe" not in pipe_err,
+          f"exit={code} (want {-signal.SIGPIPE}) stderr={pipe_err[-200:]!r}")
 
     # The same thing through compress.py, which is a second entry point and so
     # a second place to forget a line of setup. It did: the first version of
@@ -236,20 +283,16 @@ def main():
     # an assertion aimed near the claim rather than at it (Rules 3, 12).
     # So: capture what reached the reader and demand the format marker.
     compress_py = os.path.join(SRC, "compress.py")
-    reader = subprocess.Popen(["head", "-1"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-    writer = subprocess.Popen([sys.executable, compress_py], stdin=subprocess.PIPE,
-                              stdout=reader.stdin, stderr=subprocess.PIPE)
-    reader.stdin.close()
-    writer.stdin.write(TABULATES.encode())
-    writer.stdin.close()
-    legacy_err = writer.stderr.read()
-    legacy_out = reader.stdout.read()
-    writer.wait()
-    reader.wait()
-    check("compress.py entry point: a document reaches the reader, no traceback",
+    legacy_code, legacy_out, legacy_err = through_head([sys.executable, compress_py])
+    # Three conditions, and each one caught a different real defect: the marker
+    # caught a compress.py whose __main__ had been deleted entirely (a silent
+    # no-op has no traceback either), the traceback condition is the original
+    # bug, and the signal is what makes the pair mean anything at all.
+    check("compress.py entry point: document reaches the reader, dies on SIGPIPE",
           legacy_out.startswith(render.FORMAT_MARKER.encode())
+          and legacy_code == -signal.SIGPIPE
           and b"Traceback" not in legacy_err and b"BrokenPipe" not in legacy_err,
-          f"stdout={legacy_out[:40]!r} stderr={legacy_err[-200:]!r}")
+          f"exit={legacy_code} stdout={legacy_out[:40]!r} stderr={legacy_err[-200:]!r}")
 
     # ---- an unexpected crash must not empty the pipe ------------------------
     # json.loads parses this in its C scanner, then strip_boilerplate recurses
@@ -267,11 +310,27 @@ def main():
     # It also covers more than it used to: at this depth json.loads itself
     # raises, from inside detect_content_type, which is where the first version
     # of the guard was not looking.
-    nested = b"[" * (sys.getrecursionlimit() * 10) + b"]" * (sys.getrecursionlimit() * 10)
-    code, out8, err9 = run([], stdin=nested)
-    check("pathological input: exit 0, bytes come back, stderr says what broke",
-          code == 0 and out8 == nested and b"passed through unchanged" in err9,
-          f"exit={code} out={len(out8)}B of {len(nested)}B stderr={err9[-120:]!r}")
+    for label, payload, should_parse in (
+        ("dies in compression", PARSES_THEN_CRASHES, True),
+        ("dies in the parser", CRASHES_IN_PARSER, False),
+    ):
+        # Rule 2: a check that can silently stop exercising its code path must
+        # report its own coverage. Whether a payload reaches compress_json
+        # depends on where json.loads gives up, which is an interpreter detail,
+        # not something this file can assert by choosing a number.
+        try:
+            json.loads(payload.decode())
+            parses = True
+        except RecursionError:
+            parses = False
+        if parses != should_parse:
+            print(f"\n  !! '{label}' payload no longer exercises that half —")
+            print(f"     json.loads {'succeeds' if parses else 'fails'} on it here.")
+
+        code, out8, err9 = run([], stdin=payload)
+        check(f"pathological input ({label}): exit 0, bytes back, stderr says what broke",
+              code == 0 and out8 == payload and b"passed through unchanged" in err9,
+              f"exit={code} out={len(out8)}B of {len(payload)}B stderr={err9[-120:]!r}")
 
     # ---- the wrapper -------------------------------------------------------
     # bin/margin holds real logic — symlink resolution and the venv path — and

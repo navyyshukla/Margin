@@ -60,10 +60,16 @@ replacing the clipboard with nothing.
 The first fix wrapped the compression call, which covered half the surface. At
 10,000 `json.loads` raises `RecursionError` *itself*, from inside
 `detect_content_type` — so the identical failure was still live one layer out
-while this document already claimed it could not happen. That is why the guard
-now spans the parse too, and why the test derives its depth from
-`sys.getrecursionlimit()` instead of hardcoding the one number that happened to
-land in the band between the two recursions.
+while this document already claimed it could not happen.
+
+The second fix raised the test payload to 10,000 to catch that, and thereby
+stopped exercising the first half: the pipeline short-circuits at whichever
+recursion comes first, so a single payload can only ever reach one of them.
+Moving the compression guard back out still passed every check. **There are two
+recursions, so there are two guards and two payloads** — one at ~3× the
+recursion limit that parses and then dies in `strip_boilerplate`, one at 10×
+that dies in the parser — and the test asserts which half each one reaches
+rather than trusting a number to keep landing in the right band.
 
 The `except` is deliberately `Exception` rather than `RecursionError`: the
 promise is about the pipeline, not about which bugs were anticipated.

@@ -276,8 +276,25 @@ same on a closed pipe" asserted only that stderr held no traceback — and a
 exits 0 with empty stderr, so it passed. The check now captures what reached the
 reader and demands the `#margin/v1` marker.
 
-Four instances, one habit: **write down what the check would let through, not
-just what it catches.** Each of these was found by someone running the mutation
+**A fifth and sixth time, in the same file, on the next pass.** Both closed-pipe
+checks passed with `die_on_broken_pipe` gutted to `pass`: the test document was
+665 bytes, which fits entirely in the 64KB pipe buffer, so the writer finished
+and exited 0 before `head -1` ever closed the pipe. SIGPIPE never fired. The
+checks were named for a signal they never provoked. They now pipe a 139KB
+document and assert the exit status **is** `-SIGPIPE`, rather than that a
+traceback is absent — which was also true of a run where nothing went wrong.
+
+And the pathological-input check, rewritten the round before to derive its depth
+from `sys.getrecursionlimit()`, thereby stopped covering the half it used to
+cover: the pipeline stops at whichever of its two recursions blows first, so one
+payload reaches one guard. Moving the compression guard back out passed
+everything.
+
+Six instances, one habit: **write down what the check would let through, not
+just what it catches.** Every one was found by someone running the mutation
 rather than reading the assertion, which is why "watch the gate fail" is a step
-and not a formality. Three of the four were caught by a reviewer, not by the
-person who wrote them.
+and not a formality — and note that in two cases the mutation to run was not the
+obvious one. Deleting the code under test is the easy check; the hard one is
+asking whether the *fixture* still reaches it. Five of the six were caught by a
+reviewer rather than by the person who wrote them, and three were introduced by
+the fix for the previous one.

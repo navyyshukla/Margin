@@ -163,38 +163,46 @@ def main(argv=None):
         sys.stdout.buffer.write(raw_bytes)
         return 0
 
-    # One guard, over the whole pipeline: parse and compression both.
+    # Two guards, and neither contains a write to stdout.
     #
-    # It was around compress_json alone, and that covered half the surface. The
-    # payload that bought the guard — 3,000 nested arrays — happens to sit in
-    # the band where json.loads' C scanner copes and strip_boilerplate's
-    # recursion does not. Push it to 10,000 and json.loads raises RecursionError
-    # itself, from inside detect_content_type, which catches only
-    # JSONDecodeError. Exit 1, traceback, zero bytes on stdout: exactly the
-    # failure this was written to remove, still live one layer out, while
-    # docs/cli.md claimed it could not happen.
+    # Both recursions in the pipeline have to be covered, because either can
+    # blow the stack and they are on opposite sides of the same call. json.loads
+    # raises RecursionError itself past roughly 3× the recursion limit, from
+    # inside detect_content_type, which catches only JSONDecodeError; below
+    # that, the parse succeeds and strip_boilerplate blows up instead. Guarding
+    # only compress_json left the first live; guarding them together, with a
+    # test payload deep enough to reach the parser, silently stopped exercising
+    # the second — the pipeline short-circuits at whichever recursion comes
+    # first, so one guard tested by one payload can only ever cover one half.
     #
-    # Hence covering the parse too, and hence `except Exception` rather than
-    # `except RecursionError`. The promise is about the pipeline, not about
-    # which bugs were anticipated: whatever goes wrong between reading and
-    # writing, the bytes handed over come back out and stderr says what broke.
-    # This is the library's own rule — "if the table cannot be proved correct,
-    # emit JSON" — one layer up.
+    # `except Exception`, not `except RecursionError`: the promise is about the
+    # pipeline, not about which bugs were anticipated. This is the library's own
+    # rule — "if the table cannot be proved correct, emit JSON" — one layer up.
+    #
+    # The writes stay outside. With the passthrough write inside the guard, a
+    # partial write that raised (a full disk, mid-flush) would land in the
+    # handler and emit raw_bytes a second time, appending a duplicate copy to
+    # what was already written and printing two contradictory notes.
     try:
         content_type, data = detect_content_type(raw_text)
-        if content_type != "json":
-            # No summary line here. Its percentage would be 0.0% by
-            # construction — it can say nothing else — and computing it is what
-            # drags tiktoken onto the one path whose entire promise is "handed
-            # back exactly what you gave me". On a machine with no tiktoken
-            # cache that means fetching a BPE vocabulary over the network to
-            # print a constant, so a failed curl on a fresh laptop would
-            # traceback instead of passing through. The not-UTF-8 branch above
-            # already prints no summary; now they agree.
-            note("not JSON — passed through unchanged")
-            sys.stdout.buffer.write(raw_bytes)
-            return 0
+    except Exception as exc:
+        note(f"could not parse ({type(exc).__name__}: {exc}) — passed through unchanged")
+        sys.stdout.buffer.write(raw_bytes)
+        return 0
 
+    if content_type != "json":
+        # No summary line here. Its percentage would be 0.0% by construction —
+        # it can say nothing else — and computing it is what drags tiktoken onto
+        # the one path whose entire promise is "handed back exactly what you
+        # gave me". On a machine with no tiktoken cache that means fetching a
+        # BPE vocabulary over the network to print a constant, so a failed curl
+        # on a fresh laptop would traceback instead of passing through. The
+        # not-UTF-8 branch above already prints no summary; now they agree.
+        note("not JSON — passed through unchanged")
+        sys.stdout.buffer.write(raw_bytes)
+        return 0
+
+    try:
         text, notes = compress_json(data, original_text=raw_text)
     except Exception as exc:
         note(f"could not compress ({type(exc).__name__}: {exc}) — passed through unchanged")
