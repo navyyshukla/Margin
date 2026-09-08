@@ -1,6 +1,6 @@
 # The harness, and the rule each part enforces
 
-Five gates and twelve rules. Each rule exists because something got past the
+Six gates and thirteen rules. Each rule exists because something got past the
 gates before it, and each is written down with the failure that bought it — a
 rule whose reason is forgotten is a rule someone deletes.
 
@@ -8,6 +8,7 @@ rule whose reason is forgotten is a rule someone deletes.
 |---|---|---|
 | `src/property_test.py` | Does the format survive shapes nobody wrote down? | no — generates its own |
 | `src/cli_test.py` | Does the tool keep the promises the tool makes? | no — generates its own |
+| `src/mutation_test.py` | Can `cli_test.py` still fail? | no — mutates the source |
 | `src/eval_harness.py` | Do the answers survive on the payloads I have? | yes |
 | `.claude/hooks/run_eval.sh` | Did Claude's last edit break any of them? | no |
 | `.githooks/pre-commit` | Is this commit allowed to exist? | no |
@@ -298,3 +299,29 @@ obvious one. Deleting the code under test is the easy check; the hard one is
 asking whether the *fixture* still reaches it. Five of the six were caught by a
 reviewer rather than by the person who wrote them, and three were introduced by
 the fix for the previous one.
+
+## Rule 13 — Automate the mutation, because intending to run it does not work
+
+Six instances of one habit, over three review rounds costing roughly 80,000
+tokens each, three of them introduced by the fix for the previous one. Writing
+the rule down did not stop it: Rule 12 was violated twice *after* it was
+written, once in its own fix.
+
+So it is a gate now. `src/mutation_test.py` breaks each guarded behaviour on a
+throwaway copy and demands **the check named for that behaviour** go red — not
+merely that the suite fails, because a mutation that trips an unrelated check
+looks exactly like coverage it does not have. Eight mutations, four seconds,
+wired into both hooks.
+
+Two details it needs, both learned immediately by getting them wrong:
+
+- **A missing anchor is a failure, not a skip.** If the source moved out from
+  under a mutation's search text, that mutation is testing nothing — which is
+  the Rule 12 failure again, inside the tool built to prevent it.
+- **The baseline must be checked first.** The suite's first version reported all
+  eight caught on a tree where two checks were *already failing*: every mutation
+  "made the gate fail" for free. A red baseline turns a mutation suite into a
+  machine that always says yes. That was instance seven, found in the file
+  itself within about ninety seconds of writing it — which is the argument for
+  the file. The check is cheap and the mistake is evidently not one that
+  intending to avoid it avoids.

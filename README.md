@@ -84,7 +84,8 @@ outcomes rather than gaps.
 | `src/eval_harness.py` | asks the questions before and after |
 | `src/property_test.py` | generates payloads trying to break the format |
 | `src/cli_test.py` | runs the CLI as a subprocess and checks what it promises |
-| `docs/harness.md` | the twelve rules the test suite enforces, and the failure that bought each |
+| `src/mutation_test.py` | breaks the CLI on purpose and checks that cli_test.py notices |
+| `docs/harness.md` | the thirteen rules the test suite enforces, and the failure that bought each |
 | `docs/cli.md` | exit codes, and the two properties the pipe depends on |
 | `docs/shapes.md` | which API shapes are handled, and what happens to each |
 | `docs/thresholds.md` | every threshold and where its number came from |

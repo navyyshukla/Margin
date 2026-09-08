@@ -58,7 +58,10 @@ Run `./.githooks/install.sh` once per clone — it copies the hooks into `.git/h
   `src/eval_harness.py` fails. The eval harness skips cleanly when `.venv` or the gitignored
   sample payload is missing (a fresh checkout has neither; that's not a regression); the property
   test and the CLI test generate their own payloads, so they always run.
-- **`.claude/hooks/run_eval.sh`** (wired in `.claude/settings.json`) — runs all three after any
+- **`src/mutation_test.py`** — breaks each guarded behaviour on a throwaway copy and demands the
+  check *named for it* go red. Six checks in `cli_test.py` once passed while their subject was
+  deleted; this is why writing that rule down was not enough (harness.md Rule 13).
+- **`.claude/hooks/run_eval.sh`** (wired in `.claude/settings.json`) — runs all four after any
   Claude edit to `src/*.py` or `bin/margin` and exits 2 on failure, so a regression surfaces
   mid-session.
 
@@ -82,10 +85,18 @@ a real defect.
 - [x] **PR-review gate.** The pre-commit hook blocks direct commits to `main`; the review step is
       the other half. First run: PR #1, `/code-review` before merging, findings addressed in the
       branch rather than after the fact.
-- The standing procedure for every merge to `main`: open the PR, run `/code-review` on it, fix what
-  it finds on `development`, then merge. Never merge on the strength of a green harness alone —
+- The standing procedure for every merge to `main`: open the PR, run `/code-review` **once**, fix
+  what it finds on `development`, then merge. Never merge on the strength of a green harness alone —
   every stage so far has had at least one real defect that only a reader found, whether that reader
   was the code reviewer or the cold-read model.
+- **Once, not until clean** (amended 2026-09-09). PR #2 ran three rounds at roughly 80,000 tokens
+  each because each round re-reviewed the previous round's fixes. Six of the nine findings were the
+  same mistake, and `src/mutation_test.py` now catches all six in four seconds. Re-review only when
+  the fixes were structural — a second round on a patch is the expensive way to ask a question a
+  gate can answer.
+- Review is for what a gate *cannot* see: a design that is wrong rather than broken, a claim in a
+  doc, a risk nobody encoded. If a finding could have been a gate, the fix is the gate, not another
+  round.
 
 ## Where things stand
 The compressor is done and merged (PR #1). Eight payloads from eight APIs, 121,569 → 75,066 tokens

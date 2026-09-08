@@ -80,6 +80,18 @@ if ! "$PYTHON" "$SRC/cli_test.py"; then
   exit 1
 fi
 
+# Asks whether the gate above can still fail. Six checks in that file have gone
+# green while the behaviour they were named for was deleted; this breaks each
+# one on purpose and demands the matching check notice.
+echo "pre-commit: running mutation coverage (against the staged content)..."
+if ! "$PYTHON" "$SRC/mutation_test.py"; then
+  echo "" >&2
+  echo "pre-commit: a mutation survived — commit refused." >&2
+  echo "  A CLI check no longer fails when its subject is broken, or the" >&2
+  echo "  mutation's anchor text moved and it is now testing nothing." >&2
+  exit 1
+fi
+
 for sample in "${SAMPLES[@]}"; do
   [ -f "$sample" ] || continue
   echo "pre-commit: running eval harness on $(basename "$sample")..."
