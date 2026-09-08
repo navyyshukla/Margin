@@ -26,10 +26,10 @@ staged_src=$(git diff --cached --name-only --diff-filter=ACM | grep '^src/.*\.py
 
 repo_root=$(git rev-parse --show-toplevel)
 PYTHON="$repo_root/.venv/bin/python"
-SAMPLES=(
-  "$repo_root/data/samples/github_issues.json"
-  "$repo_root/data/samples/hn_stories.json"
-)
+# Globbed, not listed: a payload added later would otherwise be silently
+# unguarded. nullglob so an empty data/samples/ yields nothing, not the pattern.
+shopt -s nullglob
+SAMPLES=("$repo_root"/data/samples/*.json)
 
 # The sample is gitignored and the venv is local, so a fresh checkout has
 # neither. Missing inputs are not a regression — say so and allow the commit.
@@ -50,7 +50,13 @@ fi
 for sample in "${SAMPLES[@]}"; do
   [ -f "$sample" ] || continue
   echo "pre-commit: running eval harness on $(basename "$sample")..."
-  if ! "$PYTHON" "$repo_root/src/eval_harness.py" "$sample"; then
+  "$PYTHON" "$repo_root/src/eval_harness.py" "$sample"
+  status=$?
+  # 3 = no questions for this payload yet: unfinished work, not a regression.
+  # Allowed through, but said out loud on every commit until it is written.
+  if [ "$status" -eq 3 ]; then
+    echo "pre-commit: WARNING — $(basename "$sample") has no eval questions; unguarded."
+  elif [ "$status" -ne 0 ]; then
     echo "" >&2
     echo "pre-commit: eval harness failed on $(basename "$sample") — commit refused." >&2
     echo "  A compression rule changed the answers, or broke the round-trip." >&2

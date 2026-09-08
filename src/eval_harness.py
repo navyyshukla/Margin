@@ -165,13 +165,23 @@ def run(data, checks):
     return failures
 
 
-# Which check module goes with which sample. Keyed by filename so running the
-# harness needs only the path — one argument, no way to pair a payload with the
-# wrong questions by accident.
-CHECKS_FOR_SAMPLE = {
-    "github_issues.json": "checks_github",
-    "hn_stories.json": "checks_hn",
-}
+NO_QUESTIONS_EXIT = 3
+# Distinct from 1 (a real failure) so the hooks can tell "this payload has no
+# questions yet" from "this payload's answers changed".
+
+
+def checks_module_name(sample_path):
+    """data/samples/hn_stories.json -> "checks_hn_stories".
+
+    Derived from the filename rather than looked up in a table. The table was
+    fine for two payloads; at eight it is a third place to remember to edit when
+    adding one, and the failure mode of forgetting is a payload that silently
+    never gets evaluated.
+
+    Naming is the pairing, so a payload and its questions cannot drift apart.
+    """
+    name = sample_path.rsplit("/", 1)[-1]
+    return "checks_" + name.rsplit(".", 1)[0]
 
 
 def main():
@@ -180,12 +190,18 @@ def main():
         sys.exit(1)
 
     path = sys.argv[1]
-    name = path.rsplit("/", 1)[-1]
-    if name not in CHECKS_FOR_SAMPLE:
-        print(f"no check module registered for {name} — "
-              f"known samples: {', '.join(sorted(CHECKS_FOR_SAMPLE))}", file=sys.stderr)
-        sys.exit(1)
-    checks = importlib.import_module(CHECKS_FOR_SAMPLE[name])
+    module_name = checks_module_name(path)
+    try:
+        checks = importlib.import_module(module_name)
+    except ModuleNotFoundError:
+        print(f"no questions for {path} — write src/{module_name}.py "
+              f"(copy the shape of src/checks_hn_stories.py)", file=sys.stderr)
+        # Exit 3, not 1: a payload with no questions yet is unfinished work, not
+        # a regression. The hooks skip it with a warning so that dropping a new
+        # sample into data/samples/ does not block every edit until its
+        # questions are written — while still saying, every run, that it is
+        # unguarded.
+        sys.exit(NO_QUESTIONS_EXIT)
 
     with open(path, encoding="utf-8") as f:
         raw_text = f.read()

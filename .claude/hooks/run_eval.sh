@@ -14,12 +14,13 @@ set -uo pipefail
 PROJECT_DIR="/Users/navyshukla/Margin Project"
 PYTHON="$PROJECT_DIR/.venv/bin/python"
 
-# Every sample with a check module. A hook that only guarded one payload would
-# miss a regression in the other, which is the whole reason a second one exists.
-SAMPLES=(
-  "$PROJECT_DIR/data/samples/github_issues.json"
-  "$PROJECT_DIR/data/samples/hn_stories.json"
-)
+# Every sample present, found by globbing rather than listed. A hook that only
+# guarded one payload would miss a regression in the other, which is the whole
+# reason a second one exists — and a hardcoded list means a payload added later
+# is silently never checked. nullglob so an empty data/samples/ yields nothing
+# rather than the literal pattern.
+shopt -s nullglob
+SAMPLES=("$PROJECT_DIR"/data/samples/*.json)
 
 file_path=$(jq -r '.tool_input.file_path // .tool_response.filePath // empty')
 
@@ -51,7 +52,13 @@ for sample in "${SAMPLES[@]}"; do
   [ -f "$sample" ] || continue
   ran=$((ran + 1))
 
-  if ! output=$("$PYTHON" "$PROJECT_DIR/src/eval_harness.py" "$sample" 2>&1); then
+  output=$("$PYTHON" "$PROJECT_DIR/src/eval_harness.py" "$sample" 2>&1)
+  status=$?
+  # 3 = no questions written for this payload yet. Unfinished, not broken.
+  if [ "$status" -eq 3 ]; then
+    echo "note: $(basename "$sample") has no eval questions yet — unguarded"
+    ran=$((ran - 1))
+  elif [ "$status" -ne 0 ]; then
     echo "eval harness FAILED on $(basename "$sample") after editing $file_path" >&2
     echo "$output" >&2
     exit 2
