@@ -14,9 +14,11 @@ accident, and nothing restores them. Every later stage is exactly reversible.
 That boundary is what round-trip verification is measured against — see
 src/table.py.
 
-Usage: python src/compress.py data/samples/some_response.json > compressed.json
+Usage: margin data/samples/some_response.json > compressed.txt
+       (this file is the library; src/cli.py is the program — see docs/cli.md)
 """
 
+import functools
 import json
 import sys
 
@@ -24,7 +26,6 @@ import tiktoken
 
 import render
 from decompress import decompress
-from detect import detect_content_type
 from table import MIN_ROWS_TO_TABULATE, build_table, find_record_array, same_json
 
 NOISE_KEYS = {"node_id", "gravatar_id"}
@@ -205,8 +206,20 @@ def compress_json(data, original_text=None):
     return result(text, [])
 
 
+@functools.lru_cache(maxsize=8)
 def token_count(text):
-    """Tokens under cl100k_base — the unit every threshold here is measured in."""
+    """Tokens under cl100k_base — the unit every threshold here is measured in.
+
+    Cached because the same few strings get counted repeatedly: compress_json
+    counts the compact JSON and the original, then the CLI's summary line wants
+    exactly those two again. Encoding the largest sample costs 16 ms
+    (github_issues.json, 50,031 tokens; the whole compression is 42 ms), so the
+    repeats were not free. Safe to cache — a pure function of its argument.
+
+    maxsize is small on purpose: the keys are whole payloads, and property_test
+    counts thousands of generated ones. 8 covers the handful any single
+    compression revisits and lets the rest fall out.
+    """
     global _ENCODING
     if _ENCODING is None:
         _ENCODING = tiktoken.get_encoding("cl100k_base")
@@ -216,30 +229,17 @@ def token_count(text):
 _ENCODING = None  # loaded once, lazily: get_encoding is slow to call repeatedly
 
 
-def main():
-    if len(sys.argv) != 2:
-        print("usage: python src/compress.py <path-to-json-file>", file=sys.stderr)
-        sys.exit(1)
-
-    with open(sys.argv[1], encoding="utf-8") as f:
-        raw_text = f.read()
-
-    content_type, data = detect_content_type(raw_text)
-
-    if content_type == "json":
-        text, notes = compress_json(data, original_text=raw_text)
-        for note in notes:
-            print(f"note: {note}", file=sys.stderr)
-        sys.stdout.write(text if text.endswith("\n") else text + "\n")
-    else:
-        # No plain_text compression rule exists yet (nothing built it needs to
-        # justify studying/writing one — see CLAUDE.md's "study just in time").
-        # Pass it through unchanged rather than mangling content we don't
-        # understand yet. sys.stdout.write, not print: print() would append a
-        # newline the input never had, so the "unchanged" path wouldn't be
-        # byte-for-byte unchanged.
-        sys.stdout.write(raw_text)
-
-
 if __name__ == "__main__":
-    main()
+    # One input path for the whole project, and it lives in cli.py. This file
+    # used to read argv and stdout itself, which meant `margin` and
+    # `python src/compress.py` were two implementations of "read a payload,
+    # write a document" that could drift — the same mistake Rule 4 records for
+    # encode_cell and decode_cell, one layer up. Imported here rather than at
+    # the top because cli imports this module.
+    #
+    # There is no plain_text compression rule yet and nothing has needed one
+    # (CLAUDE.md's "study just in time"); cli.py passes non-JSON through
+    # untouched rather than mangling content we do not understand.
+    import cli
+
+    sys.exit(cli.main())
