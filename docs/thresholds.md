@@ -10,38 +10,59 @@ Measured 2026-09-07 against:
 
 Token counts are tiktoken `cl100k_base` throughout.
 
-## `MIN_TABLE_SAVING = 0.10` (src/compress.py)
+## `MIN_TABLE_SAVING = 0.05` (src/compress.py)
 
-The table must beat plain JSON by at least 10% or the compressor emits JSON instead.
+The table must beat the JSON fallback by at least 5% or the compressor emits
+that JSON instead.
 
-| Payload | stripped JSON | table | saving |
+Re-derived 2026-09-08 across eight payloads, table vs. the **compact** JSON that
+is its actual alternative:
+
+| Payload | compact JSON | table | saving |
 |---|---|---|---|
-| github_issues.json | 31,023 | 23,420 | **24.5%** |
-| hn_stories.json | 43,578 | 20,319 | **53.4%** |
+| hn_stories.json | 35,585 | 20,266 | **43.0%** |
+| coingecko_prices.json | 1,226 | 833 | **32.1%** |
+| graphql_countries.json | 15,187 | 11,379 | **25.1%** |
+| github_issues.json | 28,884 | 23,429 | **18.9%** |
+| jsonplaceholder_posts.json | 7,162 | 6,411 | **10.5%** |
+| pokeapi_ditto.json | 7,897 | 7,407 | **6.2%** |
+| openmeteo, exchangerates | — | no table | — |
 
-Gated at 10% — comfortably under the worse of the two, so a differently-shaped
-payload still gets the win, while a payload where the table barely helps falls
-back rather than paying the cost of a second format for nothing.
+**This number was wrong twice, in ways worth remembering.**
 
-HN read 18.6% here until 2026-09-08; scalar-array columns and depth-2
-flattening took it to 53.4%. The threshold stays at 10% regardless: it exists to
-catch the payload these rules do *not* suit, and raising it to hug whatever the
-current best result happens to be would only reject that payload's smaller but
-still real win.
+*First, the baseline was padded.* "Stripped JSON" used to mean
+`json.dumps(...)` with its default `", "` and `": "` — whitespace never present
+in the file as fetched. This document spotted that on 2026-09-08 and filed it as
+a reporting caveat, saying the gate "must keep comparing against `json.dumps`,
+because that is the fallback it would emit instead."
 
-**A warning about this table's left column.** "Stripped JSON" is
-`json.dumps(...)`, whose `", "` and `": "` separators are not in the file as
-fetched. On HN, which strips to nothing, the file itself is 35,585 tokens while
-`json.dumps` of the same data is 43,578 — so the old "18.6% saving" was 18.6%
-against a form of the data that never existed on disk. Measured against the
-actual file it was **0.3%**. The gate must keep comparing against `json.dumps`,
-because that is the fallback it would emit instead, but every figure quoted to a
-human should be against the raw file:
+That was the wrong conclusion. The right one was that the *fallback* should not
+have been padded. It was output, not a footnote — and on three of the six
+payloads added later it made the compressor return **more** tokens than it was
+given. `COMPACT` separators everywhere fixed the output and the denominator at
+once. Every "table beats JSON by N%" figure recorded before that date was
+measured against a competitor nobody would have shipped.
 
-| Payload | raw file | compressed | saving |
-|---|---|---|---|
-| github_issues.json | 50,031 | 23,420 | **53.2%** |
-| hn_stories.json | 35,585 | 20,319 | **42.9%** |
+*Second, 0.10 was set on two payloads and cost a real win on the eighth.*
+`pokeapi_ditto.json` compresses by a correct, verified 6.2% — 490 tokens — and
+0.10 threw it away to avoid "the risk of a second format for nothing". That risk
+was priced when the format was unproven. It is now self-describing (`#legend`)
+and has passed a cold read by a model with no access to this repo, so the price
+has dropped and the gate follows it.
+
+0.05 keeps every real win in the sample set with room beneath the smallest, and
+still refuses a table that merely breaks even. Deliberately **not** Headroom's
+0.30, which would reject all but one of these.
+
+### The stronger guarantee underneath the gate
+
+`compress_json` also takes the original text and refuses to return anything
+longer than it. A file's own formatting can tokenize slightly better than any
+canonical re-serialisation, so "we could not improve this" has to mean handing
+back exactly what arrived — Open-Meteo was still −0.1% on re-encoding alone.
+
+Worst case across all eight payloads is now 0.0%. See `docs/shapes.md` for the
+full table.
 
 **Headroom uses 0.30 here.** Adopting it would reject both of our results — the
 better one by 5.5 points. That is the concrete reason CLAUDE.md says to measure
@@ -128,19 +149,44 @@ tokens — a rule that fires on accidents in a 30-row sample.
 Revisit only with a payload where a mirrored column is large *and* obviously
 derived.
 
-## Long-text handling: currently inline (not yet a threshold)
+## `MAX_RECORD_SEARCH_DEPTH = 4` (src/table.py)
 
-The plan anticipated hoisting long strings out of CSV cells into
-length-delimited blocks. Measurement says not yet:
+How deep to hunt for the records. Was effectively 1 — top level, then one level
+into a dict — which returned *nothing* for `{"data": {"items": [...]}}`. That is
+JSON:API, GraphQL, and countless REST wrappers, and it compressed by exactly 0%.
 
-| | chars |
+4 covers every wrapper convention in the sample set with room to spare
+(`graphql_countries.json` needs 2, the deepest seen). The walk only descends
+through dict keys, so its cost is the number of nested objects, not the size of
+the data. List *indices* are deliberately not walked: `#path` is a sequence of
+keys, so a list inside another list could not be addressed on the way back.
+
+Candidates are ranked by total cells, ties breaking toward the shallower path
+then alphabetically. "First match" was an accident of dict ordering — a payload
+whose small incidental list came before its real records tabulated the wrong
+one, which round-trips perfectly and compresses almost nothing.
+
+## `MIN_RECORDS_IN_MAP = 2` (src/table.py)
+
+Same reasoning as `MIN_ROWS_TO_TABULATE`: below two records there is no repeated
+key name to factor out. The interesting constraint on record maps is not the
+count but the *value type* — see `docs/shapes.md`.
+
+## Long-text hoisting: measured, and not built
+
+**Closed 2026-09-08.** The plan anticipated hoisting long strings out of CSV
+cells into length-delimited blocks. The measurement that was owed:
+
+| | tokens |
 |---|---|
-| non-body string fields | 3 – 134 |
-| `body` fields | 495 – 6,987 |
+| all 30 `body` fields, raw | 19,220 |
+| the same fields as CSV cells | 19,336 |
 
-The gap between 134 and 495 is wide and empty, so a threshold anywhere in it
-would be equally defensible — which is exactly why it shouldn't be picked yet.
-Inline CSV already round-trips correctly on all 30 bodies (30 contain newlines,
-14 contain quotes, 29 contain commas), so hoisting would be a token
-optimisation, not a correctness fix. Build it when a measurement shows the
-quoting overhead actually costs something worth the extra format complexity.
+**116 tokens, 0.6%** — that is the entire cost of CSV quoting on the payload
+with the most prose in the sample set, across 30 bodies of which 30 contain
+newlines, 14 contain quotes and 29 contain commas. Python's `csv` module was
+already doing this efficiently.
+
+Not worth a second block format and a length-delimited parser. The `body` wall
+is real, but it is 82% of GitHub's output as *content*, not as quoting overhead,
+and no rule compresses prose losslessly.

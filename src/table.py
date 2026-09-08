@@ -404,6 +404,15 @@ def column_type_name(values):
         return "int"
     if all(isinstance(value, float) for value in present):
         return "float"
+    if all(isinstance(value, (int, float)) and not isinstance(value, bool)
+           for value in present):
+        # Mixed ints and floats. Distinct from "json" purely so the header tells
+        # the truth: coingecko's `eur` column holds 67514 in one row and 2138.02
+        # in another, and calling that `json` next to `eur_24h_change:float`
+        # made a cold reader ask why two plainly numeric columns had different
+        # types and be unable to answer (2026-09-08). The cells are identical
+        # either way; only the label changes.
+        return "num"
     if all(isinstance(value, str) for value in present):
         return "str"
     if all(isinstance(value, list) for value in present):

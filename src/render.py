@@ -47,7 +47,7 @@ LEGEND_PREFIX = "#legend "
 CONST_PREFIX = "#const"
 PATH_PREFIX = "#path"
 WRAP_PREFIX = "#wrap"
-KEYED_PREFIX = "#keyed"
+KEYED_PREFIX = "#keyed "
 # Present when the records came from a dict rather than a list: names the column
 # holding what was the dict key. Without it the rows would come back as a list
 # and the identities would be data in a column rather than the keys they were.
@@ -128,6 +128,13 @@ def legend_for(table, encoded_rows):
             f"#keyed = rows came from an object; column {table['key_column']} "
             "holds each record's key"
         )
+
+    # a.b was the only convention the 2026-09-08 cold reader got right purely by
+    # recognising dotted-path notation from elsewhere — the document itself never
+    # said it. A reader without that background reads `continent.name` as a
+    # column literally called "continent.name".
+    if any("." in column["name"] for column in table["columns"]):
+        seen.append("col a.b = nested object, i.e. {\"a\": {\"b\": ...}}")
 
     return "; ".join(seen)
 
@@ -274,7 +281,7 @@ def encode_cell(value, type_name=None):
         return ""
     if value is None:
         return NULL_CELL
-    if type_name == "json":
+    if type_name in ("json", "num"):
         # A "json" column is the mixed-type column: its values have no single
         # Python type, so the ONLY thing decode_cell can do is json.loads. That
         # forces every value here to be written as JSON, strings included.
@@ -353,4 +360,6 @@ def decode_cell(text, type_name):
         return int(text)
     if type_name == "float":
         return float(text)
+    # "num" and "json" both go through json.loads, which is what keeps 67514 an
+    # int and 2138.02 a float in the same column.
     return json.loads(text)
