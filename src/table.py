@@ -17,10 +17,21 @@ key at all, which is exactly how Q4 and Q10 tell them apart.
 
 MISSING = object()  # sentinel: this row had no such key (never appears in JSON)
 
-# Nested dicts are flattened one level only: {"user": {"login": x}} -> "user.login".
-# Deeper nesting stays a whole value in one cell — depth-1 covers every nested
-# object in the sample payloads, and each extra level multiplies the column count.
+# Nested dicts become dotted columns: {"user": {"login": x}} -> "user.login".
 FLATTEN_SEPARATOR = "."
+
+MAX_FLATTEN_DEPTH = 2
+# Measured 2026-09-08 on hn_stories.json. Depth 1 covered GitHub completely, but
+# Algolia nests one level deeper: _highlightResult.title is itself a dict of
+# {matchLevel, matchedWords, value}, so at depth 1 the whole thing sits in one
+# JSON cell — 3,352 tokens, 16% of all cell content. Opened up, matchLevel and
+# matchedWords are identical in all 30 rows and collapse into #const for free.
+# That is the same payoff flattening had at depth 1, where it turned 12 constant
+# columns into 21.
+#
+# Not unlimited: each level multiplies the column count, and a deeply nested
+# object that varies per row would produce a wide, sparse table that costs more
+# than the JSON cell it replaced. Raise it when a payload shows it pays.
 
 
 def find_record_array(data):
@@ -56,16 +67,17 @@ def _is_record_list(value):
     )
 
 
-def flatten_row(row):
-    """One level of nesting becomes dotted keys: {"user": {"login": x}} -> {"user.login": x}.
+def flatten_row(row, depth=MAX_FLATTEN_DEPTH):
+    """Nesting becomes dotted keys: {"user": {"login": x}} -> {"user.login": x}.
 
-    A nested dict is only flattened when it can be put back together
-    unambiguously — see can_flatten. Anything else stays whole.
+    Descends up to `depth` levels. A nested dict is only flattened when it can
+    be put back together unambiguously — see can_flatten. Anything else, and
+    anything past the depth limit, stays whole in one cell.
     """
     flat = {}
     for key, value in row.items():
-        if can_flatten(key, value):
-            for inner_key, inner_value in value.items():
+        if depth > 0 and can_flatten(key, value):
+            for inner_key, inner_value in flatten_row(value, depth - 1).items():
                 flat[f"{key}{FLATTEN_SEPARATOR}{inner_key}"] = inner_value
         else:
             flat[key] = value
@@ -89,18 +101,28 @@ def can_flatten(key, value):
 
 
 def unflatten_row(flat):
-    """Inverse of flatten_row: "user.login" -> {"user": {"login": ...}}.
+    """Inverse of flatten_row: "a.b.c" -> {"a": {"b": {"c": ...}}}.
 
     A parent dict is created only when at least one of its children is present,
     which is what preserves "this row genuinely had no pull_request key".
+
+    Recursive, to match flatten_row: it peels one level per call, so a key still
+    holding a separator after the split is nesting that has yet to be rebuilt.
+    That reading is only unambiguous because can_flatten refuses to flatten a
+    dict whose own keys contain the separator — so every dot present here was
+    put there by flatten_row, never by the data.
     """
     row = {}
+    nested = {}
     for key, value in flat.items():
         if FLATTEN_SEPARATOR in key:
             parent, inner_key = key.split(FLATTEN_SEPARATOR, 1)
-            row.setdefault(parent, {})[inner_key] = value
+            nested.setdefault(parent, {})[inner_key] = value
         else:
             row[key] = value
+
+    for parent, children in nested.items():
+        row[parent] = unflatten_row(children)
     return row
 
 
