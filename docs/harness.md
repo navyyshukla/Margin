@@ -1,14 +1,15 @@
 # The harness, and the rule each part enforces
 
-Four gates and ten rules. Each rule exists because something got past the gates
-before it, and each is written down with the failure that bought it — a rule
-whose reason is forgotten is a rule someone deletes.
+Five gates and twelve rules. Each rule exists because something got past the
+gates before it, and each is written down with the failure that bought it — a
+rule whose reason is forgotten is a rule someone deletes.
 
 | Gate | Asks | Needs a sample payload? |
 |---|---|---|
 | `src/property_test.py` | Does the format survive shapes nobody wrote down? | no — generates its own |
+| `src/cli_test.py` | Does the tool keep the promises the tool makes? | no — generates its own |
 | `src/eval_harness.py` | Do the answers survive on the payloads I have? | yes |
-| `.claude/hooks/run_eval.sh` | Did Claude's last edit break either? | no |
+| `.claude/hooks/run_eval.sh` | Did Claude's last edit break any of them? | no |
 | `.githooks/pre-commit` | Is this commit allowed to exist? | no |
 
 Run `./.githooks/install.sh` once per clone, and **again after editing any hook** —
@@ -212,3 +213,46 @@ header some distance above — and both were caught by the reader recounting.
 of the format, so the header now repeats every 40 rows (+0.3%).
 
 Correctness is not the same as legibility, and only this test tells them apart.
+
+## Rule 11 — The everyday invocation is a test case
+
+Every gate above calls `compress_json` in-process. None had ever seen an
+argument, a stream or an exit code, so for a day the library was proven and the
+program around it was unexamined — four green gates and:
+
+- `margin f.json | head -1`, which is *how you look at a document*, printed a
+  BrokenPipeError traceback under the output. Python replaces the default
+  SIGPIPE handler with one that raises, so a filter has to opt back in to
+  behaving like `cat`.
+- A missing file produced eleven lines of `FileNotFoundError` traceback. That
+  is the right output for a bug in margin and the wrong output for a typo.
+- Non-JSON input and empty input both passed through in total silence — a
+  failed `curl` reached the clipboard as an HTML error page with nothing said.
+
+None of these are format bugs and no amount of round-tripping could reach them.
+`src/cli_test.py` now runs the CLI as a **subprocess**, because argv, the
+stdout/stderr split and the exit code only exist at the process boundary;
+importing `main()` would test everything except the part nothing had tested.
+
+Note also what the first sabotage of that file showed: a CLI replaced by `cat`
+still passed the round-trip check, because plain JSON decompresses fine. It was
+caught only by the assertion that stdout *starts with `#margin/v1`*. **Rule 1
+holds one layer up: a test of a tool must assert the tool ran.**
+
+## Rule 12 — A skip is a hole in whichever environment the gate actually runs in
+
+Rule 8 says a missing input should skip rather than fail, and that is still
+right. But `cli_test.py` first wrote its launcher check as "no `.venv`? skip" —
+and `pre-commit` runs the staged tree out of a scratch directory via
+`git checkout-index`, which by construction never has a `.venv`. The skip was
+not an edge case for fresh clones; it was **the only branch pre-commit could
+ever take**. The launcher would have been gated by the Claude hook alone and
+never at commit time.
+
+The fix was not to remove the skip but to notice that the skipped situation has
+a defined correct behaviour of its own — no venv means exit 2 naming the venv
+and how to create it — and to check that instead. The branch a fresh clone
+takes is now covered rather than waved through.
+
+**Before writing a skip, ask which gate runs in the environment that triggers
+it.** If the answer is "the one I am writing this for", it is not a skip.

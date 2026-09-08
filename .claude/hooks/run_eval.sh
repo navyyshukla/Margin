@@ -33,9 +33,16 @@ fi
 
 file_path=$(jq -r '.tool_input.file_path // .tool_response.filePath // empty')
 
-# Only care about Python files under this project's src/.
+# Only care about Python files under this project's src/, plus the launcher.
+#
+# bin/margin is not Python and not under src/, but it holds real logic — the
+# symlink-resolution loop and the venv path — and breaking it breaks the tool
+# just as thoroughly as breaking cli.py. Without this line, the one file whose
+# whole job is "find the repo from wherever you were invoked" was the one file
+# no gate ever ran on.
 case "$file_path" in
   "$PROJECT_DIR"/src/*.py) ;;
+  "$PROJECT_DIR"/bin/margin) ;;
   *) exit 0 ;;
 esac
 
@@ -50,6 +57,16 @@ esac
 # shapes nobody thought to write down.
 if ! output=$("$PYTHON" "$PROJECT_DIR/src/property_test.py" 2>&1); then
   echo "property test FAILED after editing $file_path" >&2
+  echo "$output" >&2
+  exit 2
+fi
+
+# Same reasoning, one layer up: it generates its own payload, so it runs on a
+# fresh checkout too. It asks the question neither other gate can — both of
+# those call compress_json in-process, so no argument, stream or exit code was
+# ever checked by anything until this existed.
+if ! output=$("$PYTHON" "$PROJECT_DIR/src/cli_test.py" 2>&1); then
+  echo "CLI contract FAILED after editing $file_path" >&2
   echo "$output" >&2
   exit 2
 fi
