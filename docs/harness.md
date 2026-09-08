@@ -269,3 +269,15 @@ carries the evidence; it just had to be asked for.
 
 That is Rule 3's shape a third time. A check aimed near the claim is not a check
 aimed at it.
+
+**A fourth time, in the check written for Rule 11.** "compress.py behaves the
+same on a closed pipe" asserted only that stderr held no traceback — and a
+`compress.py` with its entire `__main__` block deleted is a silent no-op that
+exits 0 with empty stderr, so it passed. The check now captures what reached the
+reader and demands the `#margin/v1` marker.
+
+Four instances, one habit: **write down what the check would let through, not
+just what it catches.** Each of these was found by someone running the mutation
+rather than reading the assertion, which is why "watch the gate fail" is a step
+and not a formality. Three of the four were caught by a reviewer, not by the
+person who wrote them.

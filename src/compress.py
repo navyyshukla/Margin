@@ -244,9 +244,14 @@ if __name__ == "__main__":
     # Running cli.py *as __main__* means it does everything it does for
     # `margin`, and there is no list of setup steps to keep in sync.
     #
-    # It also stops this file being imported twice under two names: cli.py's
-    # `from compress import ...` loads the module normally, so one `_ENCODING`
-    # and one token_count cache serve the run.
+    # It does NOT stop this file being loaded twice — an earlier version of this
+    # comment claimed it did, and `python -X importtime src/compress.py` says
+    # otherwise: this file stays registered as `__main__`, so cli.py's
+    # `from compress import ...` executes the body again under the name
+    # `compress`, giving two `_ENCODING` globals and two token_count caches.
+    # Only the `compress` copy is ever used, so it costs one extra import and
+    # nothing else. Recorded rather than quietly dropped, because a false
+    # invariant in a comment is worse than an unstated one (Rule 5).
     import os
     import runpy
 

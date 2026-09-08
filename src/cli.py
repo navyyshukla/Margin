@@ -163,38 +163,41 @@ def main(argv=None):
         sys.stdout.buffer.write(raw_bytes)
         return 0
 
-    content_type, data = detect_content_type(raw_text)
-    if content_type != "json":
-        # No summary line here. Its percentage would be 0.0% by construction —
-        # it can say nothing else — and computing it is what drags tiktoken
-        # onto the one path whose entire promise is "handed back exactly what
-        # you gave me". On a machine with no tiktoken cache that means fetching
-        # a BPE vocabulary over the network to print a constant, so a failed
-        # curl on a fresh laptop would traceback instead of passing through.
-        # The not-UTF-8 branch above already prints no summary; now they agree.
-        note("not JSON — passed through unchanged")
-        sys.stdout.buffer.write(raw_bytes)
-        return 0
-
+    # One guard, over the whole pipeline: parse and compression both.
+    #
+    # It was around compress_json alone, and that covered half the surface. The
+    # payload that bought the guard — 3,000 nested arrays — happens to sit in
+    # the band where json.loads' C scanner copes and strip_boilerplate's
+    # recursion does not. Push it to 10,000 and json.loads raises RecursionError
+    # itself, from inside detect_content_type, which catches only
+    # JSONDecodeError. Exit 1, traceback, zero bytes on stdout: exactly the
+    # failure this was written to remove, still live one layer out, while
+    # docs/cli.md claimed it could not happen.
+    #
+    # Hence covering the parse too, and hence `except Exception` rather than
+    # `except RecursionError`. The promise is about the pipeline, not about
+    # which bugs were anticipated: whatever goes wrong between reading and
+    # writing, the bytes handed over come back out and stderr says what broke.
+    # This is the library's own rule — "if the table cannot be proved correct,
+    # emit JSON" — one layer up.
     try:
+        content_type, data = detect_content_type(raw_text)
+        if content_type != "json":
+            # No summary line here. Its percentage would be 0.0% by
+            # construction — it can say nothing else — and computing it is what
+            # drags tiktoken onto the one path whose entire promise is "handed
+            # back exactly what you gave me". On a machine with no tiktoken
+            # cache that means fetching a BPE vocabulary over the network to
+            # print a constant, so a failed curl on a fresh laptop would
+            # traceback instead of passing through. The not-UTF-8 branch above
+            # already prints no summary; now they agree.
+            note("not JSON — passed through unchanged")
+            sys.stdout.buffer.write(raw_bytes)
+            return 0
+
         text, notes = compress_json(data, original_text=raw_text)
     except Exception as exc:
-        # The library's own standing rule is "if the table cannot be proved
-        # correct, emit JSON". This is that rule one layer up: if the payload
-        # cannot be compressed at all, emit the payload.
-        #
-        # Bought by a real one. json.loads parses 3,000 nested arrays happily
-        # in its C scanner, then strip_boilerplate recurses through them and
-        # blows the stack — and RecursionError is not a JSONDecodeError, so it
-        # escaped detect_content_type and this function both. Exit 1, traceback
-        # on stderr, and ZERO BYTES on stdout: `curl ... | margin | pbcopy`
-        # silently replaced the clipboard with nothing.
-        #
-        # Catching Exception rather than RecursionError on purpose. The
-        # promise this file makes is about the pipeline, not about which bugs
-        # were anticipated: whatever goes wrong in there, the bytes you handed
-        # over come back out and stderr says what happened.
-        note(f"compression failed ({type(exc).__name__}: {exc}) — passed through unchanged")
+        note(f"could not compress ({type(exc).__name__}: {exc}) — passed through unchanged")
         sys.stdout.buffer.write(raw_bytes)
         return 0
 

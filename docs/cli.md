@@ -45,19 +45,28 @@ looks exactly like a hang.
 | 2 | margin was called wrong, or there was nothing to read | no such file; empty input; two paths; unknown option |
 | 141 | the reader closed the pipe (`\| head -1`) | normal, and what `cat` does |
 
-**A crash is a 0, not a 1.** The compression call is wrapped, and anything that
-escapes it emits the input unchanged with a loud line on stderr. The library's
-standing rule is "if the table cannot be proved correct, emit JSON"; this is the
-same rule one layer up — if the payload cannot be compressed at all, emit the
-payload.
+**A crash is a 0, not a 1.** Parsing and compression are both inside one guard,
+and anything that escapes emits the input unchanged with a loud line on stderr.
+The library's standing rule is "if the table cannot be proved correct, emit
+JSON"; this is the same rule one layer up — if the payload cannot be compressed
+at all, emit the payload.
 
-Bought by a real one. `json.loads` parses 3,000 nested arrays happily in its C
-scanner, and then `strip_boilerplate` recurses through them and blows the stack.
-`RecursionError` is not a `JSONDecodeError`, so it escaped every guard: exit 1,
-a traceback, and **zero bytes on stdout** — `curl ... | margin | pbcopy`
-replacing the clipboard with nothing. The `except` is deliberately `Exception`
-rather than `RecursionError`: the promise is about the pipeline, not about which
-bugs were anticipated.
+Bought by a real one, and then bought again. 3,000 nested arrays parse fine in
+`json.loads`' C scanner and then blow the stack in `strip_boilerplate`;
+`RecursionError` is not a `JSONDecodeError`, so it escaped every guard — exit 1,
+a traceback, and **zero bytes on stdout**, `curl ... | margin | pbcopy`
+replacing the clipboard with nothing.
+
+The first fix wrapped the compression call, which covered half the surface. At
+10,000 `json.loads` raises `RecursionError` *itself*, from inside
+`detect_content_type` — so the identical failure was still live one layer out
+while this document already claimed it could not happen. That is why the guard
+now spans the parse too, and why the test derives its depth from
+`sys.getrecursionlimit()` instead of hardcoding the one number that happened to
+land in the band between the two recursions.
+
+The `except` is deliberately `Exception` rather than `RecursionError`: the
+promise is about the pipeline, not about which bugs were anticipated.
 
 There is deliberately **no code for "compressed poorly"**. 0% saving is a
 correct outcome for `openmeteo_forecast.json` and `exchangerates_usd.json` —

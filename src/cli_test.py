@@ -229,18 +229,27 @@ def main():
     # a second place to forget a line of setup. It did: the first version of
     # its __main__ called cli.main() without die_on_broken_pipe(), so the exact
     # traceback above was still live here while the check passed on cli.py.
+    # And it must still produce a document. Checking only "no traceback" passed
+    # on a compress.py with its entire __main__ block deleted — a silent no-op
+    # exiting 0 with empty stderr has no traceback either. Caught by the second
+    # review, and it is the third instance of the same mistake in this file:
+    # an assertion aimed near the claim rather than at it (Rules 3, 12).
+    # So: capture what reached the reader and demand the format marker.
     compress_py = os.path.join(SRC, "compress.py")
-    reader = subprocess.Popen(["head", "-1"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL)
+    reader = subprocess.Popen(["head", "-1"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     writer = subprocess.Popen([sys.executable, compress_py], stdin=subprocess.PIPE,
                               stdout=reader.stdin, stderr=subprocess.PIPE)
     reader.stdin.close()
     writer.stdin.write(TABULATES.encode())
     writer.stdin.close()
     legacy_err = writer.stderr.read()
+    legacy_out = reader.stdout.read()
     writer.wait()
     reader.wait()
-    check("compress.py entry point behaves the same on a closed pipe",
-          b"Traceback" not in legacy_err, f"stderr={legacy_err[-200:]!r}")
+    check("compress.py entry point: a document reaches the reader, no traceback",
+          legacy_out.startswith(render.FORMAT_MARKER.encode())
+          and b"Traceback" not in legacy_err and b"BrokenPipe" not in legacy_err,
+          f"stdout={legacy_out[:40]!r} stderr={legacy_err[-200:]!r}")
 
     # ---- an unexpected crash must not empty the pipe ------------------------
     # json.loads parses this in its C scanner, then strip_boilerplate recurses
@@ -248,7 +257,17 @@ def main():
     # so it escaped every guard: exit 1, traceback, and zero bytes on stdout —
     # `curl ... | margin | pbcopy` clearing the clipboard. The contract is that
     # bytes in means bytes out, whatever goes wrong in between.
-    nested = b"[" * 3000 + b"]" * 3000
+    # Depth derived from the recursion limit, not the hardcoded 3,000 this
+    # started as. 3,000 only crashes because it lands in the narrow band where
+    # json.loads' C scanner copes and strip_boilerplate's recursion does not —
+    # on an interpreter where 3,000 survives both, the payload passes through
+    # legitimately and the check would report a failure against correct
+    # behaviour. Ten times the limit is past every recursion in the pipeline.
+    #
+    # It also covers more than it used to: at this depth json.loads itself
+    # raises, from inside detect_content_type, which is where the first version
+    # of the guard was not looking.
+    nested = b"[" * (sys.getrecursionlimit() * 10) + b"]" * (sys.getrecursionlimit() * 10)
     code, out8, err9 = run([], stdin=nested)
     check("pathological input: exit 0, bytes come back, stderr says what broke",
           code == 0 and out8 == nested and b"passed through unchanged" in err9,
@@ -265,7 +284,12 @@ def main():
     # behaviour — exit 2 saying which venv and how to make it — so check that
     # instead. Same branch a fresh clone takes, now covered rather than waved
     # through.
-    repo = os.path.dirname(SRC)
+    # realpath, not abspath. bin/margin resolves its repo with `cd -P`, which
+    # resolves symlinks, so on macOS it reports /private/var/... where abspath
+    # gives /var/... — and the assertion below passed only because one is a
+    # substring of the other. A check that holds by coincidence of this
+    # platform's naming is not a check.
+    repo = os.path.realpath(os.path.dirname(SRC))
     venv_python = os.path.join(repo, ".venv", "bin", "python")
     if not os.path.exists(WRAPPER):
         check("bin/margin exists", False, f"not at {WRAPPER}")
