@@ -29,6 +29,22 @@ from table import build_table, find_record_array
 
 NOISE_KEYS = {"node_id", "gravatar_id"}
 
+COMPACT = (",", ":")
+# json.dumps defaults to ", " and ": " — whitespace that was never in the file
+# as fetched. It matters twice, and both ways it flattered us:
+#
+#   1. As OUTPUT. On payloads with no record array the compressor emits this
+#      JSON, and the padding made three of the six sample payloads come out
+#      BIGGER than they went in — Open-Meteo by 19%, exchange rates by 25%.
+#      A compressor that inflates a payload is worse than no compressor.
+#   2. As the DENOMINATOR of the savings gate. Every "table beats JSON by N%"
+#      figure was measured against an inflated baseline, so the gate was
+#      grading against a competitor nobody would have shipped.
+#
+# docs/thresholds.md flagged this as a reporting caveat on 2026-09-08 and left
+# the code alone. That was the wrong call: it is not a reporting problem, it is
+# padding in the output. Compact everywhere, and the thresholds re-derived.
+
 
 def strip_boilerplate(data, drop_bare_url=None):
     """Recursively drop link-template and opaque-ID keys from dicts/lists.
@@ -110,16 +126,38 @@ MIN_ROWS_TO_TABULATE = 2
 # one header line, so it starts paying at the first repeated row. Below this a
 # table cannot win and is not worth attempting.
 
-MIN_TABLE_SAVING = 0.10
-# Measured 2026-09-07: the table saves 24.5% over stripped JSON on
-# github_issues.json. Gated well below that so a differently-shaped payload
-# still gets the win, while a payload where the table barely helps falls back
-# to JSON rather than paying the risk of a second format for nothing.
-# Deliberately NOT Headroom's 0.30 — that would reject our own best result.
+MIN_TABLE_SAVING = 0.05
+# Re-derived 2026-09-08 across eight payloads, against the COMPACT JSON the
+# compressor would actually emit instead (see COMPACT — the old 0.10 was set
+# against a padded baseline, so every figure behind it was inflated).
+#
+# Real savings, table vs. the JSON that is its actual alternative:
+#
+#   hn_stories          43.0%      openmeteo         no table
+#   graphql_countries   25.1%      coingecko         no table
+#   github_issues       18.9%      exchangerates     no table
+#   jsonplaceholder     10.5%
+#   pokeapi_ditto        6.2%
+#
+# 0.10 rejected pokeapi_ditto's correct, verified 6.2% — 490 tokens thrown away
+# to avoid "the risk of a second format". That risk was priced when the format
+# was unproven; it is now self-describing (#legend) and has passed a cold read
+# by a model with no access to this repo, so the price has dropped and the gate
+# should follow. 0.05 keeps every real win in the sample set with room beneath
+# the smallest, and still refuses a table that merely breaks even.
+#
+# Deliberately NOT Headroom's 0.30, which would reject all but one of these.
 
 
-def compress_json(data):
+def compress_json(data, original_text=None):
     """Full pipeline. Returns (text, notes).
+
+    original_text, when given, is the payload exactly as it arrived. It is used
+    for one thing: making sure the output is never longer than the input. A
+    file's own formatting can tokenize marginally better than any canonical
+    re-serialisation of it, so "we could not improve this" must mean handing
+    back what we were given, not a re-encoded version of the same data that
+    happens to cost four tokens more.
 
     notes explains any fallback to plain JSON. It is not decoration: if a bug
     makes the table unusable and we silently emit JSON instead, every eval
@@ -128,13 +166,19 @@ def compress_json(data):
     exactly that reason.
     """
     stripped = strip_boilerplate(data)
-    as_json = json.dumps(stripped)
+    as_json = json.dumps(stripped, separators=COMPACT)
+
+    def result(text, notes):
+        """Never hand back something longer than what we were given."""
+        if original_text is not None and token_count(text) >= token_count(original_text):
+            return original_text, notes + ["no improvement — returned the input unchanged"]
+        return text, notes
 
     rows, array_path = find_record_array(stripped)
     if rows is None:
-        return as_json, ["no record array found — nothing to tabulate"]
+        return result(as_json, ["no record array found — nothing to tabulate"])
     if len(rows) < MIN_ROWS_TO_TABULATE:
-        return as_json, [f"only {len(rows)} row(s) — below MIN_ROWS_TO_TABULATE"]
+        return result(as_json, [f"only {len(rows)} row(s) — below MIN_ROWS_TO_TABULATE"])
 
     wrapper = skeleton(stripped, array_path)
 
@@ -151,16 +195,16 @@ def compress_json(data):
         text = render.render(build_table(rows, array_path, wrapper))
         restored = decompress(text)
     except Exception as exc:
-        return as_json, [f"table render/parse failed ({type(exc).__name__}: {exc})"]
+        return result(as_json, [f"table render/parse failed ({type(exc).__name__}: {exc})"])
 
     if restored != stripped:
-        return as_json, ["ROUND-TRIP MISMATCH — fell back to JSON"]
+        return result(as_json, ["ROUND-TRIP MISMATCH — fell back to JSON"])
 
     saving = 1 - token_count(text) / token_count(as_json)
     if saving < MIN_TABLE_SAVING:
-        return as_json, [f"table saved only {saving:.1%} — below MIN_TABLE_SAVING"]
+        return result(as_json, [f"table saved only {saving:.1%} — below MIN_TABLE_SAVING"])
 
-    return text, []
+    return result(text, [])
 
 
 def token_count(text):
@@ -185,7 +229,7 @@ def main():
     content_type, data = detect_content_type(raw_text)
 
     if content_type == "json":
-        text, notes = compress_json(data)
+        text, notes = compress_json(data, original_text=raw_text)
         for note in notes:
             print(f"note: {note}", file=sys.stderr)
         sys.stdout.write(text if text.endswith("\n") else text + "\n")
