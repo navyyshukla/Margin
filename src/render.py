@@ -169,14 +169,29 @@ def render(table):
         f"{c['name']}:{c['type']}{'?' if c['nullable'] else ''}"
         for c in table["columns"]
     )
-    lines.append(f"[{table['count']}]{{{header_cols}}}")
+    header = f"[{table['count']}]{{{header_cols}}}"
+    lines.append(header)
 
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")
-    for row in encoded_rows:
+    for index, row in enumerate(encoded_rows):
+        if index and index % HEADER_REPEAT_EVERY == 0:
+            buffer.write(header + "\n")
         writer.writerow(row)
 
     return "\n".join(lines) + "\n" + buffer.getvalue()
+
+
+HEADER_REPEAT_EVERY = 40
+# Both cold reads produced a near-wrong answer by miscounting positional
+# columns: the first drifted across a run of empty cells, the second landed on
+# gbp_market_cap instead of usd while counting 13 values against a header eight
+# rows above. Both caught it by recounting, but "caught it by recounting" is not
+# something to rely on.
+#
+# Measured 2026-09-08: +191 tokens across all eight payloads, 0.3%. Only the
+# three with more than 40 rows pay anything; github_issues and hn_stories have
+# 30 and pay nothing at all, despite having the widest headers.
 
 
 def parse(text):
@@ -217,7 +232,16 @@ def parse(text):
     # The remaining lines are CSV. Hand them back to the csv module whole rather
     # than line by line: a quoted cell may legally contain newlines, so "one
     # line" and "one row" are not the same thing.
-    csv_text = "\n".join(lines[index:])
+    # Repeated headers are stripped before the csv module sees them, matched in
+    # full against the header line rather than by pattern. A cell may legally
+    # contain newlines, so a line inside a quoted body could in principle look
+    # like one — an exact match makes that vanishingly unlikely, and the
+    # round-trip check turns it into a JSON fallback rather than corruption if
+    # it ever happens.
+    header_line = lines[index - 1]
+    body_lines = [line for line in lines[index:] if line != header_line]
+
+    csv_text = "\n".join(body_lines)
     cells = []
     if not columns:
         # Every column was constant, so each row rendered as an empty line — and

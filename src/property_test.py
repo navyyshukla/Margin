@@ -275,6 +275,26 @@ MUST_TABULATE = [
     # A record whose own keys collide with the default key column name, so the
     # chosen name has to dodge them.
     {f"k{i}": {"_key": i, "_key2": i, "v": "x" * 12} for i in range(8)},
+    # Past HEADER_REPEAT_EVERY, so the header appears mid-body and the parser
+    # has to strip it back out. 2026-09-08.
+    [{"a": i, "b": "y" * 15} for i in range(95)],
+]
+
+# A cell whose own text contains a line identical to the header. The repeated
+# header is stripped by exact match on a whole line, and a quoted cell may
+# legally contain newlines, so this is the one input that can defeat it.
+#
+# It belongs in MAY_DEGRADE, not MUST_TABULATE: the strip cannot tell the two
+# apart, so the round-trip check fails and the payload correctly falls back to
+# JSON. Data is never at risk; compression is. Accepted deliberately — the
+# alternative is giving up repeated headers, which two cold reads say are worth
+# more than this case costs.
+#
+# The value must VARY per row or the constant-column rule lifts it into #const
+# and the cell never exists — which is how the first version of this case
+# silently tested nothing.
+HEADER_LOOKALIKE = [
+    {"a": i, "b": f"before\n[95]{{a:int,b:str}}\nafter {i}"} for i in range(95)
 ]
 
 MAY_DEGRADE = [
@@ -296,6 +316,7 @@ MAY_DEGRADE = [
     # Ragged objects under dynamic keys — a dict of unrelated things, not a
     # table. Tabulating it would give a wide sparse mess.
     {"a": {"x": 1}, "b": {"y": 2, "z": 3}, "c": {"w": 4}},
+    HEADER_LOOKALIKE,
 ]
 
 

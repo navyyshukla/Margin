@@ -116,7 +116,17 @@ The standing procedure: give the rendered document to a reader with **no access
 to this repo** and ask it to answer the eval questions plus "what was ambiguous?".
 Claude's own reading does not count — it designed the format.
 
-Run 2026-09-08 (see `docs/cold-read-2026-09-08.md`): **13/13 answers correct**,
-self-rated confidence 6/10, one near-miss that the reader caught only by
-cross-checking domain knowledge. Correctness is not the same as legibility, and
-only this test can tell them apart.
+Two runs so far, and its record is: every factual answer correct both times,
+and both times it found a real defect no automated gate could have seen.
+
+| | answers | confidence | what it found |
+|---|---|---|---|
+| `docs/cold-read-2026-09-08.md` | 13/13 | 6/10 | drifted across a run of empty cells |
+| `docs/cold-read-2026-09-08b.md` | 16/16 | 7/10 | miscounted 13 positional columns; `json` used for a plainly numeric column; `#keyed"_key"` had no delimiter; the dotted-path convention was never stated |
+
+The two near-misses are the same failure — counting positional values against a
+header some distance above — and both were caught by the reader recounting.
+"Caught by recounting" is luck about how careful the reader was, not a property
+of the format, so the header now repeats every 40 rows (+0.3%).
+
+Correctness is not the same as legibility, and only this test tells them apart.

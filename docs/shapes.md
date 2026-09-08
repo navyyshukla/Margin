@@ -7,15 +7,15 @@ that were never on disk (see `docs/thresholds.md`).
 
 | Payload | shape | raw | out | saved |
 |---|---|---:|---:|---:|
-| `github_issues.json` | bare list of records | 50,031 | 23,429 | **53.2%** |
-| `hn_stories.json` | records under `hits` | 35,585 | 20,266 | **43.0%** |
-| `coingecko_prices.json` | record **map** | 1,226 | 833 | **32.1%** |
-| `jsonplaceholder_posts.json` | 100 flat records | 8,761 | 6,411 | **26.8%** |
-| `graphql_countries.json` | records under `data.countries` | 13,011 | 11,379 | **12.5%** |
-| `pokeapi_ditto.json` | one deep object | 7,897 | 7,407 | **6.2%** |
+| `github_issues.json` | bare list of records | 50,031 | 23,447 | **53.1%** |
+| `hn_stories.json` | records under `hits` | 35,585 | 20,284 | **43.0%** |
+| `coingecko_prices.json` | record **map** | 1,226 | 851 | **30.6%** |
+| `jsonplaceholder_posts.json` | 100 flat records | 8,761 | 6,437 | **26.5%** |
+| `graphql_countries.json` | records under `data.countries` | 13,011 | 11,547 | **11.3%** |
+| `pokeapi_ditto.json` | one deep object | 7,897 | 7,442 | **5.8%** |
 | `openmeteo_forecast.json` | already columnar | 3,638 | 3,638 | 0.0% |
 | `exchangerates_usd.json` | map of scalars | 1,420 | 1,420 | 0.0% |
-| **total** | | **121,569** | **74,783** | **38.5%** |
+| **total** | | **121,569** | **75,066** | **38.3%** |
 
 **Nothing comes out larger than it went in.** That is enforced, not hoped for:
 `compress_json` takes the original text and refuses to return anything longer.
@@ -52,7 +52,7 @@ first column is the dict key. `#keyed` names that column; decompression turns
 the rows back into a dict.
 
 Common in price feeds, config APIs and anything Firebase-shaped. CoinGecko went
-0% → 32.1%.
+0% → 30.6%.
 
 ---
 
@@ -68,7 +68,7 @@ repeated in a single object, so there is nothing for a table to factor out; a
 one-row table costs a header plus a row and cannot win.
 
 What it does get is boilerplate stripping, plus a table over whatever incidental
-array is largest. On Ditto that is `game_indices` (46 rows), worth 6.2%. The
+array is largest. On Ditto that is `game_indices` (46 rows), worth 5.8%. The
 other 90% of the document rides along in `#wrap`, which is why that payload's
 eval questions deliberately ask about fields *outside* the tabulated array.
 
@@ -105,6 +105,7 @@ never at risk — these are compression losses, not correctness ones.
 | A key containing `,` or a newline | The header is one line of comma-separated `name:type` specs |
 | A key containing `.` | Flattening claims every dot it sees, so the split back is ambiguous |
 | The same key as both a value and a parent (`{"a": 5, "a.b": 6}`) | Cannot be a scalar and a dict at once |
+| A cell containing a line identical to the header | The header repeats every 40 rows and is stripped by exact match, so the two cannot be told apart |
 | Anything whose round-trip does not verify | The standing rule: if the table cannot be proved correct, emit JSON |
 
 ---
