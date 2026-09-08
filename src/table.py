@@ -236,6 +236,12 @@ def column_type_name(values):
     bool is checked before int because Python makes bool a subclass of int, so
     an unguarded isinstance(True, int) would tag a boolean column as int and
     decode it back as 1.
+
+    Arrays of scalars get their own types rather than falling through to "json".
+    Measured 2026-09-08 on hn_stories.json: the `children` column (arrays of
+    comment IDs) cost 33,310 tokens as JSON-inside-CSV — 81% of all cell content
+    in the payload — because every element pays for `, ` separators and the
+    whole array pays again for CSV quote-doubling. See scalar_array_type.
     """
     present = [value for value in values if value is not None]
     if not present:
@@ -248,4 +254,66 @@ def column_type_name(values):
         return "float"
     if all(isinstance(value, str) for value in present):
         return "str"
+    if all(isinstance(value, list) for value in present):
+        array_type = scalar_array_type(present)
+        if array_type:
+            return array_type
     return "json"
+
+
+def scalar_array_type(arrays):
+    """Pick a space-separated array encoding, or None to leave it as JSON.
+
+    Space separation only works when no element can contain the separator, so
+    each type carries its own admission test and anything that fails one stays
+    JSON. That is the whole safety argument: an unrepresentable column loses a
+    saving, never a value.
+
+      ints  — every element an int. `[1,2,3]` -> `1 2 3`
+      dints — the same, written as first-value-then-differences:
+              `[16582146,16582152,16582155]` -> `16582146 6 3`
+      strs  — every element a non-empty string with no whitespace, and none
+              starting with a backslash: a one-element array `["\\N"]` joins to
+              exactly the cell text that means null, and would read back as
+              None. The round-trip check catches that and falls back to JSON,
+              but falling back loses the whole table over one cell, so refuse
+              the column here instead.
+
+    Delta form is exactly reversible for ANY list of ints (decoding is a running
+    sum), so it is never a correctness question — only a token one. It is chosen
+    when every array is non-decreasing, which is the structural signature of an
+    ID or timestamp list: neighbours are close, so the differences are small
+    integers where the originals were 8-digit ones. Measured on hn_stories.json:
+    33,310 tokens as JSON -> 26,618 space-separated -> 13,525 delta-encoded.
+
+    An unsorted int column keeps `ints`, where deltas could be larger than the
+    values they replace.
+    """
+    if all(
+        all(isinstance(item, int) and not isinstance(item, bool) for item in array)
+        for array in arrays
+    ):
+        non_decreasing = all(
+            all(a <= b for a, b in zip(array, array[1:])) for array in arrays
+        )
+        return "dints" if non_decreasing else "ints"
+
+    if all(
+        all(
+            isinstance(item, str)
+            and item
+            and not item.startswith("\\")
+            and not _has_whitespace(item)
+            for item in array
+        )
+        for array in arrays
+    ):
+        return "strs"
+
+    return None
+
+
+def _has_whitespace(text):
+    """Any whitespace at all, not just a space — a tab or newline in an element
+    would survive the split() on the way back but not the join() on the way out."""
+    return any(character.isspace() for character in text)

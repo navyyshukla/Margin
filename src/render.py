@@ -24,9 +24,11 @@ Cell encoding, and why each case exists:
     key absent in this row   ->  (empty)     the row genuinely lacked the key
     None                     ->  \N          borrowed from Postgres COPY/MySQL
     "" (empty string)        ->  \E          so it cannot be read back as absent
+    [] (empty array)         ->  \A          same collapse, same fix
     True / False             ->  true/false
     int / float              ->  str(value)
-    list / dict              ->  compact JSON
+    array of scalars         ->  space-separated (column types ints/dints/strs)
+    anything else            ->  compact JSON
     string starting with \   ->  one extra leading backslash
 
 Absent and null must not collapse into the same cell: after boilerplate
@@ -47,6 +49,13 @@ WRAP_PREFIX = "#wrap"
 
 NULL_CELL = "\\N"
 EMPTY_STRING_CELL = "\\E"
+EMPTY_ARRAY_CELL = "\\A"
+# [] would otherwise render as the empty string, which already means "key absent
+# in this row" — the same collapse \E exists to prevent for "".
+
+# Column types whose cells are space-separated scalars instead of JSON. Decided
+# in table.scalar_array_type; written and read here.
+ARRAY_TYPES = ("ints", "dints", "strs")
 
 
 def render(table):
@@ -71,8 +80,12 @@ def render(table):
 
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")
+    types = [column["type"] for column in table["columns"]]
     for row in table["cells"]:
-        writer.writerow([encode_cell(value) for value in row])
+        writer.writerow([
+            encode_cell(value, type_name)
+            for value, type_name in zip(row, types)
+        ])
 
     return "\n".join(lines) + "\n" + buffer.getvalue()
 
@@ -143,8 +156,12 @@ def parse_header(line):
     return count, columns
 
 
-def encode_cell(value):
-    """One JSON value -> the text that goes in a CSV cell."""
+def encode_cell(value, type_name=None):
+    """One JSON value -> the text that goes in a CSV cell.
+
+    type_name is the column's declared type. It only matters for the array
+    types, where the column — not the individual value — decides the encoding.
+    """
     if value is MISSING:
         return ""
     if value is None:
@@ -160,7 +177,28 @@ def encode_cell(value):
         return value
     if isinstance(value, (int, float)):
         return str(value)
+    if type_name in ARRAY_TYPES:
+        if not value:
+            return EMPTY_ARRAY_CELL
+        if type_name == "dints":
+            return " ".join(str(n) for n in to_deltas(value))
+        return " ".join(str(item) for item in value)
     return json.dumps(value, separators=(",", ":"))
+
+
+def to_deltas(numbers):
+    """[16582146, 16582152, 16582155] -> [16582146, 6, 3]. First value absolute."""
+    return [numbers[0]] + [b - a for a, b in zip(numbers, numbers[1:])]
+
+
+def from_deltas(numbers):
+    """Inverse of to_deltas: a running sum."""
+    running = numbers[0]
+    restored = [running]
+    for delta in numbers[1:]:
+        running += delta
+        restored.append(running)
+    return restored
 
 
 def decode_cell(text, type_name):
@@ -175,7 +213,14 @@ def decode_cell(text, type_name):
         return None
     if text == EMPTY_STRING_CELL:
         return ""
+    if text == EMPTY_ARRAY_CELL:
+        return []
 
+    if type_name in ARRAY_TYPES:
+        if type_name == "strs":
+            return text.split(" ")
+        numbers = [int(part) for part in text.split(" ")]
+        return from_deltas(numbers) if type_name == "dints" else numbers
     if type_name == "str":
         if text.startswith("\\\\"):
             return text[1:]
