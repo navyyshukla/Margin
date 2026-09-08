@@ -20,8 +20,11 @@ if [ "$branch" = "main" ]; then
   exit 1
 fi
 
-# Only run the harness when compression/eval code actually changed.
-staged_src=$(git diff --cached --name-only --diff-filter=ACM | grep '^src/.*\.py$' || true)
+# Only run the harness when compression/eval code actually changed — plus
+# bin/margin, which is not Python but is the launcher, and breaking its symlink
+# resolution breaks the tool from every directory but the repo's own.
+staged_src=$(git diff --cached --name-only --diff-filter=ACM \
+  | grep -E '^(src/.*\.py|bin/margin)$' || true)
 [ -n "$staged_src" ] || exit 0
 
 repo_root=$(git rev-parse --show-toplevel)
@@ -62,6 +65,18 @@ if ! "$PYTHON" "$SRC/property_test.py"; then
   echo "pre-commit: property test failed — commit refused." >&2
   echo "  The format broke on a generated payload. The printed payload is" >&2
   echo "  shrunk; paste it into MUST_TABULATE or MAY_DEGRADE once fixed." >&2
+  exit 1
+fi
+
+# Also sample-free, so it runs here too. Note it tests $SRC — the staged copy —
+# which is why cli_test.py locates cli.py relative to its own __file__ rather
+# than to the repo root. Pointed at the repo it would grade the working tree
+# while the commit went in unchecked.
+echo "pre-commit: running CLI contract (against the staged content)..."
+if ! "$PYTHON" "$SRC/cli_test.py"; then
+  echo "" >&2
+  echo "pre-commit: CLI contract failed — commit refused." >&2
+  echo "  stdout is no longer pipe-clean, or an exit code moved." >&2
   exit 1
 fi
 

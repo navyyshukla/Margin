@@ -18,6 +18,7 @@ an earlier session (linked from project memory / prior chat — not duplicated h
 - **Scope:** one job — compress JSON API responses — done well, before adding a second trick.
 
 ## Layout
+- `bin/margin` — the entry point; symlink it into `~/.local/bin` once (see `docs/cli.md`)
 - `src/` — the actual code, one file per concern as it's written
 - `data/samples/` — real JSON payloads used for testing (gitignored by default — see `.gitignore`)
 - `requirements.txt` — kept minimal; add a dependency only when a line of code actually needs it
@@ -25,7 +26,10 @@ an earlier session (linked from project memory / prior chat — not duplicated h
 ## Conventions
 - This machine's `python3` is PEP-668 locked (uv-managed); use `uv venv .venv` +
   `uv pip install -r requirements.txt`, not plain `pip`, to set up the environment
-- Run scripts directly (after `source .venv/bin/activate`): `python src/<script>.py <args>`
+- Day-to-day use is `margin` (`curl ... | margin | pbcopy`); the scripts still run directly
+  (after `source .venv/bin/activate`): `python src/<script>.py <args>`
+- All input is read in `src/cli.py` and nowhere else. `compress.py` used to parse argv too, which
+  made `margin` and `python src/compress.py` two implementations of the same job, free to drift
 - Keep functions small and named for what they compute, not how (`token_count`, not `helper1`)
 - No premature abstractions — three similar lines beat a speculative helper
 - Every threshold or magic number gets a one-line comment saying where it came from (measured, not
@@ -50,23 +54,29 @@ Run `./.githooks/install.sh` once per clone — it copies the hooks into `.git/h
 `main`. Re-run `install.sh` after editing a hook.
 
 - **`.githooks/pre-commit`** — refuses commits on `main` outright; refuses any commit staging
-  `src/*.py` while `src/property_test.py` or `src/eval_harness.py` fails. The harness skips
-  cleanly when `.venv` or the gitignored sample payload is missing (a fresh checkout has neither;
-  that's not a regression); the property test generates its own payloads, so it always runs.
-- **`.claude/hooks/run_eval.sh`** (wired in `.claude/settings.json`) — runs both after any Claude
-  edit to `src/*.py` and exits 2 on failure, so a regression surfaces mid-session.
+  `src/*.py` or `bin/margin` while `src/property_test.py`, `src/cli_test.py` or
+  `src/eval_harness.py` fails. The eval harness skips cleanly when `.venv` or the gitignored
+  sample payload is missing (a fresh checkout has neither; that's not a regression); the property
+  test and the CLI test generate their own payloads, so they always run.
+- **`.claude/hooks/run_eval.sh`** (wired in `.claude/settings.json`) — runs all three after any
+  Claude edit to `src/*.py` or `bin/margin` and exits 2 on failure, so a regression surfaces
+  mid-session.
 
-**`docs/harness.md` is the rulebook — read it before changing the format.** Six rules, each
-recorded with the failure that bought it. The two that catch people repeatedly:
+**`docs/harness.md` is the rulebook — read it before changing the format.** Twelve rules, each
+recorded with the failure that bought it. The three that catch people repeatedly:
 
 - A test of the format must assert the format was *used*. `compress_json` falls back to plain JSON
   when its own round-trip fails, so a completely broken encoder still passes a naive round-trip
   check. Both tests were worthless until they checked the notes.
-- Round-trip equality cannot see a lie in the *header*. What the document claims to the reader
-  needs a check aimed at the claim, not at the data.
+- Round-trip equality cannot see a lie in the *header*, or *which* array was chosen. What the
+  document claims to the reader needs a check aimed at the claim, not at the data.
+- `==` is not equality for JSON. Python says `True == 1` and `0 == 0.0`, so a document that decoded
+  ints as floats compared equal and shipped. Use `table.same_json` everywhere.
 
-Re-run the cold read (`docs/cold-read-2026-09-08.md`) whenever a **new cell encoding** is added —
-that is precisely what a reader cannot infer and no automated gate can see.
+Re-run the cold read whenever a **new cell encoding or format line** is added — that is precisely
+what a reader cannot infer and no automated gate can see. Two runs so far,
+`docs/cold-read-2026-09-08.md` and `-08b.md`; both scored every answer correct and both still found
+a real defect.
 
 ## The `development` → `main` gate (exercised, not just described)
 - [x] **PR-review gate.** The pre-commit hook blocks direct commits to `main`; the review step is
@@ -77,9 +87,30 @@ that is precisely what a reader cannot infer and no automated gate can see.
   every stage so far has had at least one real defect that only a reader found, whether that reader
   was the code reviewer or the cold-read model.
 
+## Where things stand
+The compressor is done and merged (PR #1). Eight payloads from eight APIs, 121,569 → 75,066 tokens
+(**38.3%**), worst case 0.0% — nothing ever comes out larger than it went in. Per-payload numbers
+and the shapes behind them are in `docs/shapes.md`.
+
+**It is now a tool you can actually use** (2026-09-09): `curl ... | margin | pbcopy`. Reads a path
+or stdin, document on stdout and everything else on stderr, and "returned the input unchanged"
+now means byte-for-byte. Exit codes and the four decisions behind them are in `docs/cli.md`;
+`src/cli_test.py` is the gate.
+
+Building it bought two harness rules, which is the point of building it: four green gates had
+never seen an argument, a stream or an exit code, and `margin f.json | head -1` — the way you look
+at a document — printed a BrokenPipeError traceback (Rule 11). A "skip when there's no .venv" in
+the new test turned out to be the *only* branch pre-commit could ever take (Rule 12).
+
+## The fork after that (do not start it without deciding)
+82% of `github_issues.json`'s output is `body` prose, which no rule compresses losslessly. Going
+further means a reversible store the model can query — which turns Margin from a text filter into a
+**tool the model calls**, reversing "no proxy server, not yet" above. Worth ~92% on GitHub.
+
+Decide it against the eight payloads in `docs/shapes.md`, not the two that existed when it was
+first raised, and decide it after actually using the CLI. **The CLI now exists — so the remaining
+precondition is use, not code.** Run it on real payloads for a while first; what it turns out to
+need daily is the evidence this decision was deliberately made to wait for.
+
 ## Open TODOs
-- [ ] Nothing harness-level. The next decision is a product one: 82% of `github_issues.json`'s
-      output is `body` prose, which no rule compresses losslessly. Going further means a reversible
-      store the model can query, which turns Margin from a text filter into a tool the model calls
-      — reversing "no proxy server, not yet" above. Decide it against the eight payloads now in
-      `docs/shapes.md`, not the two that existed when it was first raised.
+- [ ] Nothing harness-level.

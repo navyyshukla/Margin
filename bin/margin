@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# The `margin` entry point: run the compressor from anywhere, without knowing
+# where the repo lives.
+#
+# Install once:
+#     ln -s "$PWD/bin/margin" ~/.local/bin/margin
+#
+# Deliberately a wrapper and not a packaged console script. A pyproject with
+# [project.scripts] is the standard answer, but src/ is flat modules importing
+# each other by bare name (`import render`, `import table`), so packaging means
+# either restructuring every file the harness guards into a package with
+# relative imports, or installing `table`/`render`/`detect` as top-level
+# site-packages modules under names anything could collide with. This resolves
+# the repo from its own location instead and touches not one import.
+
+set -euo pipefail
+
+# Resolve symlinks before taking the dirname: the installed ~/.local/bin/margin
+# is a symlink, and its own directory says nothing about where the repo is.
+# Loop rather than `readlink -f` once — a link can point at another link.
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+  dir=$(cd -P "$(dirname "$src")" && pwd)
+  src=$(readlink "$src")
+  # A relative link is relative to the directory holding the link, not to $PWD.
+  [[ $src != /* ]] && src="$dir/$src"
+done
+repo=$(cd -P "$(dirname "$src")/.." && pwd)
+
+python="$repo/.venv/bin/python"
+# Say what is missing. Letting exec fail here gives "no such file or directory"
+# naming a python nobody asked for, which reads like a bug in margin rather
+# than a repo that was never set up.
+if [ ! -x "$python" ]; then
+  echo "margin: no virtualenv at $repo/.venv" >&2
+  echo "  set it up: cd \"$repo\" && uv venv .venv && uv pip install -r requirements.txt" >&2
+  exit 2
+fi
+
+# exec, not a call: margin's exit code is cli.py's, and Ctrl-C reaches Python
+# instead of this shell.
+exec "$python" "$repo/src/cli.py" "$@"

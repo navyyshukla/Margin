@@ -11,10 +11,19 @@ feature at a time. See `CLAUDE.md` for the current architecture and decisions.
 **38.3% overall**, and nothing ever comes out larger than it went in.
 
 ```bash
-uv venv .venv && source .venv/bin/activate
-uv pip install -r requirements.txt
-python src/compress.py response.json > compressed.txt
+uv venv .venv && uv pip install -r requirements.txt   # once per clone
+ln -s "$PWD/bin/margin" ~/.local/bin/margin           # once per machine
 ```
+
+```bash
+curl -s https://api.github.com/repos/python/cpython/issues | margin | pbcopy
+margin response.json > compressed.txt
+```
+
+Reads a file or stdin. The document goes to stdout and everything else to
+stderr, so it drops into a pipeline without putting notes on your clipboard.
+Exit codes and the edge cases — not JSON, nothing to read, nothing worth
+compressing — are in `docs/cli.md`.
 
 ## What it does
 
@@ -66,13 +75,17 @@ outcomes rather than gaps.
 
 | Path | What |
 |---|---|
+| `bin/margin` | the entry point; finds the repo from its own path |
+| `src/cli.py` | arguments, streams and exit codes — the only place input is read |
 | `src/compress.py` | the pipeline and its thresholds |
 | `src/table.py` | decides the table's shape; renders no text |
 | `src/render.py` | writes the document and reads it back, in one file so the two cannot drift |
 | `src/decompress.py` | the inverse |
 | `src/eval_harness.py` | asks the questions before and after |
 | `src/property_test.py` | generates payloads trying to break the format |
-| `docs/harness.md` | the six rules the test suite enforces, and the failure that bought each |
+| `src/cli_test.py` | runs the CLI as a subprocess and checks what it promises |
+| `docs/harness.md` | the twelve rules the test suite enforces, and the failure that bought each |
+| `docs/cli.md` | exit codes, and the two properties the pipe depends on |
 | `docs/shapes.md` | which API shapes are handled, and what happens to each |
 | `docs/thresholds.md` | every threshold and where its number came from |
 
