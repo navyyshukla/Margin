@@ -1,8 +1,8 @@
 # The harness, and the rule each part enforces
 
-Four gates. Each exists because something got past the ones before it, and each
-is written down here with the failure that bought it — a gate whose reason is
-forgotten is a gate someone deletes.
+Four gates and nine rules. Each rule exists because something got past the gates
+before it, and each is written down with the failure that bought it — a rule
+whose reason is forgotten is a rule someone deletes.
 
 | Gate | Asks | Needs a sample payload? |
 |---|---|---|
@@ -118,7 +118,59 @@ Two specific traps found this way:
   bypassed, and a bypassed gate is not a gate. Hunt for new bugs by passing a
   different seed explicitly.
 
-## Rule 6 — Some things only a cold reader can check
+## Rule 6 — A test case must declare what should happen, not just "it worked"
+
+"It round-tripped" is not the same claim as "the table was correct". The
+compressor is allowed to abandon a table and emit JSON, and that is the right
+answer for a key containing a comma and the wrong answer for a column of sorted
+integers — but both round-trip perfectly.
+
+So `property_test.py` splits its regression cases:
+
+- **`MUST_TABULATE`** — the encoder has to get these right, not dodge them. A
+  case here that degrades has found a regression.
+- **`MAY_DEGRADE`** — the format genuinely cannot express these (a key with a
+  `,`, `.` or newline; a cell containing a line identical to the header). The
+  requirement is that they degrade rather than crash, and that the data survives
+  exactly. A case here that degrades has found nothing.
+
+Without the split, every case sat in one list and the "must" cases quietly
+passed by falling back.
+
+**Corollary: make the case big enough to reach the code path.** A two-row
+payload fails `MIN_TABLE_SAVING` and comes back as JSON, so a two-row regression
+test for a table bug tests the fallback instead. `repeated()` builds eight rows
+for exactly this reason.
+
+## Rule 7 — Round-trip cannot see *which* records were chosen
+
+A payload with more than one record array tabulates the largest. Tabulating the
+wrong one round-trips perfectly — it just compresses far less and leaves the
+interesting data sitting in `#wrap` as raw JSON. No equality check can notice.
+
+`EXPECTED_PATHS` in `property_test.py` pins the answer for a bare array, a
+wrapped one, two nesting depths, and the case where a small incidental list
+comes before the real records in dict order.
+
+Same shape as Rule 3: **when a choice is invisible to the round-trip, the choice
+needs its own assertion.**
+
+## Rule 8 — Unfinished is not the same as broken
+
+A payload in `data/samples/` with no `checks_<name>.py` yet exits **3**, not 1.
+The hooks let it through with a warning on every run rather than blocking every
+edit until its questions are written.
+
+The alternative was worse in both directions: block, and adding a payload halts
+all work until its eval questions exist; treat it as a pass, and a payload can
+sit unguarded forever looking exactly like one that passes. Six payloads spent
+part of 2026-09-08 in that state deliberately, and said so on every commit.
+
+The pairing itself is by name — `data/samples/foo.json` is checked by
+`src/checks_foo.py`, derived rather than registered — so a payload and its
+questions cannot drift apart, and adding one means editing one file.
+
+## Rule 9 — Some things only a cold reader can check
 
 No automated gate can tell whether a *model* reads the format correctly. The
 harness runs its checks on decompressed data, so it never reads the document at

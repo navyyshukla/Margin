@@ -71,7 +71,7 @@ shaped around GitHub?"** So the questions deliberately lean on how this API diff
 - one story has no `url` at all (a real null, not an absent key)
 - the wrapper object carries its own metadata (`nbHits`, `page`) beside the records
 
-Executable form: `src/checks_hn.py`. Run with
+Executable form: `src/checks_hn_stories.py`. Run with
 `python src/eval_harness.py data/samples/hn_stories.json`.
 
 ## Preserve (answer must be identical after a compress/decompress round-trip)
@@ -95,3 +95,44 @@ something to delete.
 ## Manual (needs a human or an LLM)
 12. Summarize what the top 3 stories are about
 13. Which stories are about AI companies, and what happened in each
+
+
+---
+
+# The other six payloads
+
+`github_issues.json` and `hn_stories.json` are written out in prose above because
+they were the first two, and the prose is what the question set was designed
+from. The six added on 2026-09-08 live only as code, in `src/checks_<name>.py`,
+and that is deliberate rather than a backlog.
+
+**The check module is the question set.** Prose and code drifted apart within a
+day the first time — the prose still named `src/checks_hn.py` after the module
+was renamed — and where they disagree the code is what actually runs. Writing
+the questions once, executably, removes the chance to disagree.
+
+Every module carries the same three lists, and each question's name says what it
+guards:
+
+| Payload | Module | What its questions are aimed at |
+|---|---|---|
+| `graphql_countries.json` | `checks_graphql_countries.py` | the `{"data": ...}` envelope surviving; null capitals; multi-codepoint emoji; a nested object and an array of objects, 250 rows of each |
+| `jsonplaceholder_posts.json` | `checks_jsonplaceholder_posts.py` | 100 flat rows — ids staying contiguous 1..100, and no column being invented where every row has the same four keys |
+| `pokeapi_ditto.json` | `checks_pokeapi_ditto.py` | fields **outside** the tabulated array, since only `game_indices` is tabulated and a wrapper bug would return those rows perfectly while dropping the other 90% |
+| `openmeteo_forecast.json` | `checks_openmeteo_forecast.py` | the payload the compressor cannot help: 0% and completely intact, four parallel series staying the same length, units surviving |
+| `coingecko_prices.json` | `checks_coingecko_prices.py` | a record map — the map keys are the records' identity, so losing them makes every row anonymous |
+| `exchangerates_usd.json` | `checks_exchangerates_usd.py` | the boundary that stops the record-map rule over-reaching: 166 bare floats, where a key/value table costs more than it saves |
+
+## How to run
+
+```bash
+for f in data/samples/*.json; do python src/eval_harness.py "$f"; done
+```
+
+Both hooks do this on every edit and every commit. A payload with no module yet
+exits 3 and is reported as unguarded rather than failing the build — see
+`docs/harness.md` Rule 8.
+
+The `MANUAL_QUESTIONS` in each module are the ones no assertion covers: whether a
+model can actually *read* the result. Those are answered by the cold read
+(`docs/harness.md` Rule 9), not by the harness.

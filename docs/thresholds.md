@@ -20,13 +20,19 @@ is its actual alternative:
 
 | Payload | compact JSON | table | saving |
 |---|---|---|---|
-| hn_stories.json | 35,585 | 20,266 | **43.0%** |
-| coingecko_prices.json | 1,226 | 833 | **32.1%** |
-| graphql_countries.json | 15,187 | 11,379 | **25.1%** |
-| github_issues.json | 28,884 | 23,429 | **18.9%** |
-| jsonplaceholder_posts.json | 7,162 | 6,411 | **10.5%** |
-| pokeapi_ditto.json | 7,897 | 7,407 | **6.2%** |
-| openmeteo, exchangerates | — | no table | — |
+| hn_stories.json | 35,585 | 20,284 | **43.0%** |
+| coingecko_prices.json | 1,226 | 851 | **30.6%** |
+| graphql_countries.json | 15,187 | 11,547 | **24.0%** |
+| github_issues.json | 28,884 | 23,447 | **18.8%** |
+| jsonplaceholder_posts.json | 7,162 | 6,437 | **10.1%** |
+| pokeapi_ditto.json | 7,897 | 7,442 | **5.8%** |
+| exchangerates_usd.json | 1,420 | — | no table |
+| openmeteo_forecast.json | 3,642 | — | no table |
+
+The smallest shipped saving is 5.8%, which is close enough to the 0.05 gate to
+be worth watching: another readability line charged to every payload would push
+`pokeapi_ditto.json` under it, and it would fall back to JSON in silence apart
+from its note. Re-check this table whenever anything is added to every document.
 
 **This number was wrong twice, in ways worth remembering.**
 
