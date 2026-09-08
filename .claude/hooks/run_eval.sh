@@ -22,6 +22,15 @@ PYTHON="$PROJECT_DIR/.venv/bin/python"
 shopt -s nullglob
 SAMPLES=("$PROJECT_DIR"/data/samples/*.json)
 
+# Announced, not assumed. Without jq the substitution below yields an empty
+# file_path, the case falls through to *) exit 0, and this hook becomes a silent
+# no-op — reporting nothing while src/*.py is edited unguarded. Every other skip
+# in this script says so out loud; this one used to be the exception.
+if ! command -v jq >/dev/null 2>&1; then
+  echo "eval harness SKIPPED: jq not found — this hook cannot read its input" >&2
+  exit 0
+fi
+
 file_path=$(jq -r '.tool_input.file_path // .tool_response.filePath // empty')
 
 # Only care about Python files under this project's src/.

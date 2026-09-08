@@ -70,6 +70,11 @@ def find_record_array(data):
             key_column = free_key_name(value.values())
             candidates.append((path, map_to_rows(value, key_column), key_column))
 
+    # A candidate too small to tabulate is not a candidate. Leaving it in let it
+    # win on width and take the whole payload down with it — see
+    # MIN_ROWS_TO_TABULATE.
+    candidates = [c for c in candidates if len(c[1]) >= MIN_ROWS_TO_TABULATE]
+
     if not candidates:
         return None, None, None
 
@@ -112,6 +117,18 @@ def _is_record_map(value):
 MIN_RECORDS_IN_MAP = 2
 # Same reasoning as MIN_ROWS_TO_TABULATE: below two records there is no repeated
 # key name to factor out.
+
+MIN_ROWS_TO_TABULATE = 2
+# The table's fixed cost is one header line, so it can only pay once a key name
+# would otherwise be repeated — which is at the second row. Below that a table
+# is arithmetically incapable of winning.
+#
+# It lives here rather than in compress.py because find_record_array has to know
+# it. Ranking by size alone let a ONE-row list win: {"summary": [{...200 keys}],
+# "items": [30 records]} picked `summary`, which compress.py then rejected for
+# having one row — and emitted plain JSON without ever trying `items`. Measured
+# 2026-09-08: 0% on a payload that compresses fine once the summary is removed,
+# and a wide summary object beside a real record list is a common API shape.
 
 
 def free_key_name(records, preferred="_key"):
@@ -266,11 +283,29 @@ def constant_columns(flat_rows):
     return constants
 
 
-def _same_value(a, b):
-    """Equality that does not treat True as 1 or False as 0, at any depth.
+def same_json(a, b):
+    """Deep equality that also compares JSON types. Use instead of ==.
 
-    Python says True == 1 and False == 0, so a column holding True in one row
-    and 1 in another would look constant and decompress to the wrong type.
+    Python's == is too generous in two ways that matter here: True == 1 and
+    0 == 0.0. Both let a value change type without changing equality, so a
+    round-trip check written as `restored == stripped` reports success on a
+    document that decodes ints as floats.
+
+    That is not hypothetical. A column holding 0 in some rows and 0.0 in others
+    collapsed into #const and came back all-float, and the whole-payload check
+    said "equal" because dict equality bottoms out in the same == (found by
+    review 2026-09-08). The type is user-visible — `column_type_name` grew the
+    `num` type precisely because int-vs-float in a numeric column shows.
+    """
+    return _same_value(a, b)
+
+
+def _same_value(a, b):
+    """Equality that does not treat True as 1, or 0 as 0.0, at any depth.
+
+    Python says True == 1, False == 0 and 0 == 0.0, so a column holding True in
+    one row and 1 in another — or 0 and 0.0 — would look constant and
+    decompress to the wrong type.
 
     The check has to recurse, because scalar arrays are now a column shape in
     their own right: [True] == [1] under plain equality, so a children-style
@@ -281,6 +316,8 @@ def _same_value(a, b):
     it rather than leave it to the net below.
     """
     if isinstance(a, bool) != isinstance(b, bool):
+        return False
+    if isinstance(a, float) != isinstance(b, float):
         return False
     if isinstance(a, list) and isinstance(b, list):
         return len(a) == len(b) and all(_same_value(x, y) for x, y in zip(a, b))

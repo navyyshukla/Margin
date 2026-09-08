@@ -29,8 +29,9 @@ import random
 import sys
 
 from compress import compress_json, strip_boilerplate
-from render import FORMAT_MARKER
+from render import FORMAT_MARKER, LEGEND_PREFIX
 from decompress import decompress
+from table import same_json
 
 TRIALS = 2000
 # Enough that a fresh run takes a couple of seconds and still explores widely.
@@ -176,7 +177,7 @@ def round_trips(payload):
         text, notes = compress_json(payload)
         if any(broken in note for note in notes for broken in BROKEN_TABLE_NOTES):
             return False
-        return decompress(text) == strip_boilerplate(payload)
+        return same_json(decompress(text), strip_boilerplate(payload))
     except Exception:
         return False
 
@@ -255,6 +256,16 @@ MUST_TABULATE = [
     repeated("a,b", 'c"d'),                        # csv quoting in values
     repeated("e\nf", "g\r\nh"),                    # newlines in values
     repeated({"b": {"c": 1}}, {"b": {"c": 2}}),    # depth-2 flattening
+    # 0 and 0.0 in one column. Python says 0 == 0.0, so this collapsed into
+    # #const and came back all-float while the round-trip check reported
+    # "equal" — dict equality bottoms out in the same ==. Invisible to every
+    # gate until same_json existed. Found by review, 2026-09-08.
+    [{"id": i, "change": 0 if i % 2 else 0.0, "t": "x" * 12} for i in range(20)],
+    # A nested object that is constant in every row: its dotted names land on
+    # the #const line, never in the header, so the legend note explaining what
+    # a.b means was not emitted at all.
+    [{"id": i, "title": f"t{i}",
+      "meta": {"source": "api-v2", "region": "us-east-1"}} for i in range(20)],
     # From the code review, 2026-09-08:
     repeated([], []),                              # no evidence: must not claim dints
     repeated([True], [1]),                         # [True] == [1] under plain ==
@@ -334,6 +345,12 @@ EXPECTED_PATHS = [
     # offer. `small` comes first and would have been chosen before 2026-09-08.
     ({"small": [{"z": 1}, {"z": 2}],
       "big": [{"a": i, "b": "q" * 20} for i in range(10)]}, ["big"]),
+    # A ONE-row list is wider than the real records and used to win on cell
+    # count — then compress.py rejected it for having one row and emitted plain
+    # JSON without ever trying the runner-up. 0% on a payload that compresses by
+    # 42.6% once the summary is gone. Found by review, 2026-09-08.
+    ({"summary": [{f"k{i}": i for i in range(200)}],
+      "items": [{"a": i, "b": "x" * 20} for i in range(30)]}, ["items"]),
 ]
 
 
@@ -344,6 +361,33 @@ def path_chosen(payload):
         return None
     line = next((l for l in text.split("\n") if l.startswith("#path")), None)
     return json.loads(line[len("#path"):]) if line else []
+
+
+def legend_explains_dotted_columns(payload):
+    """If the document shows a dotted name anywhere, it must say what a dot means.
+
+    The note was emitted only for varying columns, but flattening puts dotted
+    names on the #const line just as readily — and a payload whose only nested
+    object is constant printed #const{"meta.source":...} with no legend at all.
+    The round-trip cannot see this: the data is fine, the explanation is missing.
+    Found by review 2026-09-08; same family as type_claims_are_backed.
+    """
+    text, _ = compress_json(payload)
+    if not text.startswith(FORMAT_MARKER):
+        return True
+
+    lines = text.split("\n")
+    header = next(l for l in lines if l.startswith("["))
+    const = next((l for l in lines if l.startswith("#const")), "")
+    legend = next((l for l in lines if l.startswith(LEGEND_PREFIX)), "")
+
+    shows_dotted = any(
+        "." in spec.rsplit(":", 1)[0]
+        for spec in header[header.index("{") + 1:header.rindex("}")].split(",")
+        if spec
+    ) or any("." in key for key in json.loads(const[len("#const"):] or "{}"))
+
+    return not shows_dotted or "a.b" in legend
 
 
 def type_claims_are_backed(payload):
@@ -384,7 +428,7 @@ def degrades_safely(payload):
     """Data survives exactly, and nothing raised. The table may be abandoned."""
     try:
         text, _ = compress_json(payload)
-        return decompress(text) == strip_boilerplate(payload)
+        return same_json(decompress(text), strip_boilerplate(payload))
     except Exception:
         return False
 
@@ -421,6 +465,9 @@ def main():
             break  # one good report beats a hundred variations of it
         if not type_claims_are_backed(payload):
             failures.append(("random/unbacked-type", seed, payload))
+            break
+        if not legend_explains_dotted_columns(payload):
+            failures.append(("random/unexplained-dots", seed, payload))
             break
         tabulated += compress_json(payload)[0].startswith(FORMAT_MARKER)
 

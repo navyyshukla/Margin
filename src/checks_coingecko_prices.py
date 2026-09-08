@@ -3,15 +3,15 @@
 A record MAP, not a record list: {"bitcoin": {...}, "ethereum": {...}}. The
 records are the values, and their identity is the key holding them.
 
-Nothing in the compressor recognises this shape today — find_record_array looks
-for a list of objects and finds none, so the payload is emitted as compact JSON
-with a note. That is correct behaviour rather than a failure, but it is also the
-single most promising unbuilt rule: eight objects with twelve identical keys
-each is exactly what a table is for, and turning the map key into a column would
-be fully reversible.
+These checks were written while the compressor still emitted this payload as
+plain JSON, so that the rule which turned it into a table had something to be
+measured against rather than something to be justified by. That rule now exists
+(`table._is_record_map`): the map key becomes a column, `#keyed` names it, and
+coingecko went 0% -> 30.6%.
 
-These checks exist so that when that rule is built, the thing it must not break
-is already written down.
+What they guard now is the thing that rule can most easily get wrong — the map
+keys ARE the records' identity, so losing or reordering them leaves eight
+anonymous rows that still round-trip perfectly.
 
 Ground truth is computed from the raw payload at run time, never hardcoded, so a
 re-fetched sample keeps working. See src/checks_hn_stories.py for the shape.

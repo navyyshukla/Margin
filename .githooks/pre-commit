@@ -26,6 +26,24 @@ staged_src=$(git diff --cached --name-only --diff-filter=ACM | grep '^src/.*\.py
 
 repo_root=$(git rev-parse --show-toplevel)
 PYTHON="$repo_root/.venv/bin/python"
+
+# Test what is being COMMITTED, not what happens to be in the working tree.
+#
+# The two differ more often than it sounds: stage a good version, keep editing,
+# then commit — or `git commit path/to/one/file` with others dirty — and the
+# working tree is not the commit. A gate whose whole stated point is that it
+# "cannot be read past" was validating code that was not going in.
+#
+# git checkout-index writes the staged content to a scratch directory. It only
+# reads the index, so unlike `git stash` there is no way for it to lose work in
+# the working tree if something here goes wrong.
+STAGED_SRC=$(mktemp -d)
+trap 'rm -rf "$STAGED_SRC"' EXIT
+git checkout-index --prefix="$STAGED_SRC/" -a
+
+# The samples are gitignored, so they are not in the index — point the harness at
+# the real ones. They are inputs, not code under test.
+SRC="$STAGED_SRC/src"
 # Globbed, not listed: a payload added later would otherwise be silently
 # unguarded. nullglob so an empty data/samples/ yields nothing, not the pattern.
 shopt -s nullglob
@@ -38,8 +56,8 @@ SAMPLES=("$repo_root"/data/samples/*.json)
 # The property test needs no sample payload — it generates its own — so unlike
 # the harness it still runs on a fresh checkout, where the gitignored samples
 # are absent. That makes it the only gate a clone starts with.
-echo "pre-commit: running property test..."
-if ! "$PYTHON" "$repo_root/src/property_test.py"; then
+echo "pre-commit: running property test (against the staged content)..."
+if ! "$PYTHON" "$SRC/property_test.py"; then
   echo "" >&2
   echo "pre-commit: property test failed — commit refused." >&2
   echo "  The format broke on a generated payload. The printed payload is" >&2
@@ -50,7 +68,7 @@ fi
 for sample in "${SAMPLES[@]}"; do
   [ -f "$sample" ] || continue
   echo "pre-commit: running eval harness on $(basename "$sample")..."
-  "$PYTHON" "$repo_root/src/eval_harness.py" "$sample"
+  "$PYTHON" "$SRC/eval_harness.py" "$sample"
   status=$?
   # 3 = no questions for this payload yet: unfinished work, not a regression.
   # Allowed through, but said out loud on every commit until it is written.

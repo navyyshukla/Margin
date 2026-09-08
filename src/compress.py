@@ -25,7 +25,7 @@ import tiktoken
 import render
 from decompress import decompress
 from detect import detect_content_type
-from table import build_table, find_record_array
+from table import MIN_ROWS_TO_TABULATE, build_table, find_record_array, same_json
 
 NOISE_KEYS = {"node_id", "gravatar_id"}
 
@@ -121,11 +121,6 @@ def skeleton(data, array_path):
     return {**data, key: skeleton(data[key], array_path[1:])}
 
 
-MIN_ROWS_TO_TABULATE = 2
-# Measured 2026-09-07 on github_issues.json: the table format's fixed cost is
-# one header line, so it starts paying at the first repeated row. Below this a
-# table cannot win and is not worth attempting.
-
 MIN_TABLE_SAVING = 0.05
 # Re-derived 2026-09-08 across eight payloads, against the COMPACT JSON the
 # compressor would actually emit instead (see COMPACT — the old 0.10 was set
@@ -197,7 +192,10 @@ def compress_json(data, original_text=None):
     except Exception as exc:
         return result(as_json, [f"table render/parse failed ({type(exc).__name__}: {exc})"])
 
-    if restored != stripped:
+    # same_json, not ==. Python's == says True == 1 and 0 == 0.0, so a document
+    # that decoded ints as floats compared equal and shipped. Found by review
+    # 2026-09-08 on a column holding 0 in some rows and 0.0 in others.
+    if not same_json(restored, stripped):
         return result(as_json, ["ROUND-TRIP MISMATCH — fell back to JSON"])
 
     saving = 1 - token_count(text) / token_count(as_json)

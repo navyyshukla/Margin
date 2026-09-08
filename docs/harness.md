@@ -1,6 +1,6 @@
 # The harness, and the rule each part enforces
 
-Four gates and nine rules. Each rule exists because something got past the gates
+Four gates and ten rules. Each rule exists because something got past the gates
 before it, and each is written down with the failure that bought it — a rule
 whose reason is forgotten is a rule someone deletes.
 
@@ -170,7 +170,25 @@ The pairing itself is by name — `data/samples/foo.json` is checked by
 `src/checks_foo.py`, derived rather than registered — so a payload and its
 questions cannot drift apart, and adding one means editing one file.
 
-## Rule 9 — Some things only a cold reader can check
+## Rule 9 — `==` is not equality, for JSON
+
+Python says `True == 1` and `0 == 0.0`. Both let a value change type without
+changing equality, so a round-trip check written as `restored == stripped`
+reports success on a document that decoded ints as floats.
+
+A column holding `0` in some rows and `0.0` in others collapsed into `#const`
+and came back all-float, and the whole-payload check said "equal" because dict
+equality bottoms out in the same `==`. Nothing could see it — not the harness,
+not the property test, not the round-trip guard inside `compress_json`. Found by
+the PR review, and the type is user-visible: `column_type_name` grew the `num`
+type precisely because int-vs-float in a numeric column shows.
+
+`table.same_json` is the only comparison the pipeline should use. It is wired
+into `compress_json`'s guard, the harness's round-trip and answer checks, and
+both property-test properties — four places, because any one of them left on
+`==` is a hole in the same wall.
+
+## Rule 10 — Some things only a cold reader can check
 
 No automated gate can tell whether a *model* reads the format correctly. The
 harness runs its checks on decompressed data, so it never reads the document at

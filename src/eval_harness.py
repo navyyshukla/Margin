@@ -25,6 +25,7 @@ Usage: python src/eval_harness.py data/samples/github_issues.json
 import importlib
 import sys
 
+from table import same_json
 from compress import compress_json, strip_boilerplate
 from decompress import decompress
 from detect import detect_content_type
@@ -92,7 +93,9 @@ def run(data, checks):
     failures = 0
 
     print("ROUND-TRIP — compression must be exactly reversible")
-    if compressed == stripped:
+    # same_json, not ==: Python says True == 1 and 0 == 0.0, so a document that
+    # decoded ints as floats compared equal here and passed (review 2026-09-08).
+    if same_json(compressed, stripped):
         print("  PASS  decompress(compress(x)) == strip_boilerplate(x)")
     else:
         failures += 1
@@ -133,7 +136,7 @@ def run(data, checks):
             print(f"        compressed: could not answer — {compressed_error}")
             continue
 
-        if expected == actual:
+        if same_json(expected, actual):
             print(f"  PASS  {label}")
         else:
             failures += 1

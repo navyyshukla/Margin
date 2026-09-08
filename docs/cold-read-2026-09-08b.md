@@ -1,6 +1,6 @@
 # Cold read #2, 2026-09-08
 
-Owed by `docs/harness.md` Rule 9: `#keyed` is a new format element, and a new
+Owed by `docs/harness.md` Rule 10: `#keyed` is a new format element, and a new
 format element is exactly what a reader cannot infer and no automated gate can
 see.
 

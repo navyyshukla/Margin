@@ -68,7 +68,18 @@ recorded with the failure that bought it. The two that catch people repeatedly:
 Re-run the cold read (`docs/cold-read-2026-09-08.md`) whenever a **new cell encoding** is added —
 that is precisely what a reader cannot infer and no automated gate can see.
 
-## Open TODOs (harness-level, not feature-level)
-- [ ] Add a PR-review gate on merges from `development` → `main`. The pre-commit hook now blocks
-      direct commits to `main`, so the remaining piece is the review step itself: open a PR and run
-      `/code-review` on it before merging, once a feature is tested and solid.
+## The `development` → `main` gate (exercised, not just described)
+- [x] **PR-review gate.** The pre-commit hook blocks direct commits to `main`; the review step is
+      the other half. First run: PR #1, `/code-review` before merging, findings addressed in the
+      branch rather than after the fact.
+- The standing procedure for every merge to `main`: open the PR, run `/code-review` on it, fix what
+  it finds on `development`, then merge. Never merge on the strength of a green harness alone —
+  every stage so far has had at least one real defect that only a reader found, whether that reader
+  was the code reviewer or the cold-read model.
+
+## Open TODOs
+- [ ] Nothing harness-level. The next decision is a product one: 82% of `github_issues.json`'s
+      output is `body` prose, which no rule compresses losslessly. Going further means a reversible
+      store the model can query, which turns Margin from a text filter into a tool the model calls
+      — reversing "no proxy server, not yet" above. Decide it against the eight payloads now in
+      `docs/shapes.md`, not the two that existed when it was first raised.

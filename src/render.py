@@ -133,7 +133,14 @@ def legend_for(table, encoded_rows):
     # recognising dotted-path notation from elsewhere — the document itself never
     # said it. A reader without that background reads `continent.name` as a
     # column literally called "continent.name".
-    if any("." in column["name"] for column in table["columns"]):
+    # Constants are checked too, not just varying columns. Flattening puts
+    # dotted names on the #const line as readily as in the header, and a payload
+    # whose only nested object is constant printed #const{"meta.source":...}
+    # with no legend at all — showing the reader dotted keys and explaining
+    # nothing, which is the exact misread this note exists to prevent (review,
+    # 2026-09-08).
+    dotted = [c["name"] for c in table["columns"]] + list(table.get("constants") or {})
+    if any("." in name for name in dotted):
         seen.append("col a.b = nested object, i.e. {\"a\": {\"b\": ...}}")
 
     return "; ".join(seen)
