@@ -68,7 +68,7 @@ outcomes rather than gaps.
   before and after compression; any drift fails the build.
 - **Readable by a model, not just by a parser.** The document explains its own
   encodings, and that claim is checked by giving it to a model with no access to
-  this repo — see `docs/cold-read-2026-09-09.md`.
+  this repo — three times so far, scored in `docs/cold-reads.md`.
 - **Every number measured, never copied.** Including from Headroom, whose
   thresholds would reject most of the results above (`docs/thresholds.md`).
 
@@ -87,10 +87,7 @@ outcomes rather than gaps.
 | `src/property_test.py` | generates payloads trying to break the format |
 | `src/cli_test.py` | runs the CLI as a subprocess and checks what it promises |
 | `src/mutation_test.py` | breaks the CLI on purpose and checks that cli_test.py notices |
-| `docs/harness.md` | the thirteen rules the test suite enforces, and the failure that bought each |
-| `docs/cli.md` | exit codes, and the two properties the pipe depends on |
-| `docs/shapes.md` | which API shapes are handled, and what happens to each |
-| `docs/thresholds.md` | every threshold and where its number came from |
+| `docs/` | the written record — `docs/README.md` is the index of which file answers what |
 
 Run `./.githooks/install.sh` once per clone. `data/samples/` is gitignored — it
 holds real API responses.

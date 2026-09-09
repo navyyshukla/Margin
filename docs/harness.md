@@ -119,6 +119,19 @@ Two specific traps found this way:
 - **A fixed seed, always.** A gate that fails one commit in twenty gets
   bypassed, and a bypassed gate is not a gate. Hunt for new bugs by passing a
   different seed explicitly.
+- **A filter that silently matches nothing inflates the count.** 2026-09-10, in
+  the PR that reorganised this file: "the rules are cited from 51 places, 34 of
+  them in `src/*.py`" was written into four documents and a commit message. The
+  real figures are **27 and 20**. The inventory had excluded this file's own
+  self-references with `grep -v "^./docs/harness.md"` — but the paths printed as
+  `docs/harness.md:123`, with no `./`, so the filter matched nothing and 20
+  self-references were counted as external citations.
+
+  The number *was* measured, which is what makes it worth recording: measuring
+  is not enough if nothing checks that the measurement's own filter did anything.
+  Same shape as Rule 12 — a check aimed near the claim is not a check aimed at
+  it — and it was caught in twenty seconds by re-deriving the figure, which is
+  the cheap half of Rule 5 and the half that was skipped.
 
 ## Rule 6 — A test case must declare what should happen, not just "it worked"
 
@@ -200,14 +213,10 @@ The standing procedure: give the rendered document to a reader with **no access
 to this repo** and ask it to answer the eval questions plus "what was ambiguous?".
 Claude's own reading does not count — it designed the format.
 
-Two runs so far, and its record is: every factual answer correct both times,
-and both times it found a real defect no automated gate could have seen.
-
-| | answers | confidence | what it found |
-|---|---|---|---|
-| `docs/cold-read-2026-09-08.md` | 13/13 | 6/10 | drifted across a run of empty cells |
-| `docs/cold-read-2026-09-08b.md` | 16/16 | 7/10 | miscounted 13 positional columns; `json` used for a plainly numeric column; `#keyed"_key"` had no delimiter; the dotted-path convention was never stated |
-| `docs/cold-read-2026-09-09.md` | **11/12** | 8/10 | could not verify an index 61 deep into an unmarked `#dict` array, and **miscounted 58 as 57**; the repeating header was never explained, and reads as seven tables of 250 |
+**The procedure in full, and the running scoreboard, are in
+[`docs/cold-reads.md`](cold-reads.md)** — one copy, because a score kept in three
+places drifts on the next read. Three runs so far, and every one found a real
+defect no automated gate could have seen.
 
 All three are the same failure: **counting**. Reads #1 and #2 counted positional
 values against a header some distance above and caught themselves by recounting;
