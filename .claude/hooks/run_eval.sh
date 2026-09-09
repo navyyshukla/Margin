@@ -71,6 +71,14 @@ if ! output=$("$PYTHON" "$PROJECT_DIR/src/cli_test.py" 2>&1); then
   exit 2
 fi
 
+# Asks whether the gate above can still fail — the question three rounds of code
+# review had to answer by hand, at about 80,000 tokens each.
+if ! output=$("$PYTHON" "$PROJECT_DIR/src/mutation_test.py" 2>&1); then
+  echo "a mutation SURVIVED after editing $file_path" >&2
+  echo "$output" >&2
+  exit 2
+fi
+
 ran=0
 for sample in "${SAMPLES[@]}"; do
   # Samples are gitignored real API payloads, so a fresh checkout has none.

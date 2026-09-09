@@ -75,6 +75,59 @@ better one by 5.5 points. That is the concrete reason CLAUDE.md says to measure
 rather than copy: their threshold is correct for their compressor and wrong for
 this one.
 
+## `MIN_DICT_SAVING = 20` (src/table.py)
+
+Tokens saved, not a percentage and not a ratio of distinct values. A column
+earns a `#dict` only if replacing its cells with indices beats writing them out
+by at least this much.
+
+Derived 2026-09-09 by pricing **every** candidate column across the eight
+payloads — a candidate being any column with at least two distinct values and
+at least one repeat. The results fall into two groups with nothing between them:
+
+| built | | refused | |
+|---|---:|---|---:|
+| `graphql_countries.languages` | **+1369** | `pokeapi_ditto.game_index` | −8 |
+| `github_issues.labels` | **+801** | `github_issues.reactions.+1` | −10 |
+| `graphql_countries.continent.name` | **+95** | `hn_stories.author` | −55 |
+| `github_issues.author_association` | **+25** | `graphql_countries.currency` | −291 |
+| | | `graphql_countries.capital` | −544 |
+
+Any threshold in `(-8, +25]` produces exactly these four dictionaries on this
+data, so the precise value is not load-bearing. It is positive rather than zero
+because a dictionary that merely breaks even still costs the reader a lookup,
+and 20 rather than 25 to leave room under the smallest real win.
+
+**Why tokens and not a percentage.** A dictionary's cost is nearly fixed — the
+distinct values once, plus a couple of tokens of index per row — while its
+saving scales with how long the values are. A percentage gate would accept a
+column saving 4 tokens out of 8 and reject one saving 900 out of 4,000.
+
+**Why not a distinct-count ratio**, which is the obvious heuristic and the one
+I would have written without measuring. It is wrong in both directions on this
+data: `languages` is 126 distinct across 250 rows — a ratio that looks hopeless
+— and is the biggest win in the set, because each value is a long list of
+objects. `capital` is 245 distinct across 250 and is the biggest loss. Only
+pricing both encodings tells them apart.
+
+**Keyed by index, not a bare list.** The `#dict` line is written as
+`{"0": value, "1": value, ...}` rather than `[value, value, ...]`, costing +151
+tokens across the sample set (+0.2%). Bought by cold read #3: asked for a value
+at index 61, the reader had to hand-count 61 entries into an 11KB single-line
+array, said there was "no way to verify an index", and on the next question
+miscounted 58 as 57. Counting has been the weak point of all three cold reads.
+`HEADER_REPEAT_EVERY` made the identical trade at +0.3% — see
+`docs/cold-read-2026-09-09.md`.
+
+**One trap worth recording.** The first version of the cost model priced the
+current cells with `json.dumps`, and a `str` cell is written **bare** in the
+document — so `"x"` was charged three characters where the document holds one.
+Over-charging the status quo makes every dictionary look better than it is, and
+a column of `"x"`/`"y"` got one that cost more than the cells it replaced. Fixed
+by pricing with `render.encode_cell`, the encoder that actually writes the
+document. The general form is Rule 4: a gate has to price the output that will
+really be produced, not a stand-in for it.
+
 ## `MIN_ROWS_TO_TABULATE = 2` (src/compress.py)
 
 The table's fixed cost is one header line, so it can only pay off once a key

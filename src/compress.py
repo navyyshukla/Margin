@@ -18,14 +18,12 @@ Usage: margin data/samples/some_response.json > compressed.txt
        (this file is the library; src/cli.py is the program — see docs/cli.md)
 """
 
-import functools
 import json
 import sys
 
-import tiktoken
-
 import render
 from decompress import decompress
+from tokens import token_count
 from table import MIN_ROWS_TO_TABULATE, build_table, find_record_array, same_json
 
 NOISE_KEYS = {"node_id", "gravatar_id"}
@@ -204,29 +202,6 @@ def compress_json(data, original_text=None):
         return result(as_json, [f"table saved only {saving:.1%} — below MIN_TABLE_SAVING"])
 
     return result(text, [])
-
-
-@functools.lru_cache(maxsize=8)
-def token_count(text):
-    """Tokens under cl100k_base — the unit every threshold here is measured in.
-
-    Cached because the same few strings get counted repeatedly: compress_json
-    counts the compact JSON and the original, then the CLI's summary line wants
-    exactly those two again. Encoding the largest sample costs 16 ms
-    (github_issues.json, 50,031 tokens; the whole compression is 42 ms), so the
-    repeats were not free. Safe to cache — a pure function of its argument.
-
-    maxsize is small on purpose: the keys are whole payloads, and property_test
-    counts thousands of generated ones. 8 covers the handful any single
-    compression revisits and lets the rest fall out.
-    """
-    global _ENCODING
-    if _ENCODING is None:
-        _ENCODING = tiktoken.get_encoding("cl100k_base")
-    return len(_ENCODING.encode(text))
-
-
-_ENCODING = None  # loaded once, lazily: get_encoding is slow to call repeatedly
 
 
 if __name__ == "__main__":

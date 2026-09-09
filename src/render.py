@@ -45,6 +45,12 @@ from table import MISSING
 FORMAT_MARKER = "#margin/v1"
 LEGEND_PREFIX = "#legend "
 CONST_PREFIX = "#const"
+DICT_PREFIX = "#dict"
+# {column: [distinct values]} for columns whose cells are indices into that
+# list. #const's neighbour: that line states a value repeated in EVERY row, this
+# one states the handful a column actually draws from. Written after #const so
+# the two read together, and before the header, which is where a reader needs
+# both of them.
 PATH_PREFIX = "#path"
 WRAP_PREFIX = "#wrap"
 KEYED_PREFIX = "#keyed "
@@ -120,6 +126,37 @@ def legend_for(table, encoded_rows):
     if any(cell == "" for row in encoded_rows for cell in row):
         seen.append("empty cell = key absent in that row")
 
+    # The repeated header, explained. Cold read #3 called this "the single most
+    # dangerous thing in the document": the `[250]{...}` line appears seven
+    # times, and nothing said whether that is one table reprinted for legibility
+    # or seven tables of 250. A reader taking the second meaning answers 1,750
+    # records. That reader resolved it only by counting 256 lines and
+    # subtracting the six repeats — arithmetic the document should not require,
+    # and it got the very next count wrong (57 African countries against 58).
+    #
+    # The repeat itself was added for the opposite complaint — cold reads #1 and
+    # #2 both drifted while counting columns against a header far above — so the
+    # fix was never to remove it, only to say what it is.
+    if len(encoded_rows) > HEADER_REPEAT_EVERY:
+        seen.append(
+            "the [N]{...} header repeats every "
+            f"{HEADER_REPEAT_EVERY} rows; it is one table, not a new one"
+        )
+
+    # The most dangerous encoding in the format, and the reason is dints':
+    # a `dict` cell holds a bare integer that looks exactly like data. A reader
+    # who takes `continent.name` as 3 answers "3" instead of "Africa", with no
+    # hint that anything was substituted — and unlike a delta-encoded ID list,
+    # nothing about the number looks odd enough to prompt a second look.
+    #
+    # Stated whenever a dictionary exists, before the header that names the
+    # columns using it.
+    if table.get("dictionaries"):
+        seen.append(
+            "col:dict = the cell is a key into that column's object on the "
+            "#dict line; look it up there, the cell is not the value"
+        )
+
     # #keyed is a structural line rather than a cell encoding, but it is the
     # least guessable thing in the format: without it a reader sees an ordinary
     # column called _key and no reason to think the rows were ever a dict.
@@ -171,6 +208,9 @@ def render(table):
 
     if table["constants"]:
         lines.append(CONST_PREFIX + json.dumps(table["constants"], separators=(",", ":")))
+
+    if table.get("dictionaries"):
+        lines.append(DICT_PREFIX + json.dumps(table["dictionaries"], separators=(",", ":")))
 
     header_cols = ",".join(
         f"{c['name']}:{c['type']}{'?' if c['nullable'] else ''}"
@@ -233,6 +273,11 @@ def parse(text):
         constants = json.loads(lines[index][len(CONST_PREFIX):])
         index += 1
 
+    dictionaries = {}
+    if index < len(lines) and lines[index].startswith(DICT_PREFIX):
+        dictionaries = json.loads(lines[index][len(DICT_PREFIX):])
+        index += 1
+
     count, columns = parse_header(lines[index])
     index += 1
 
@@ -269,6 +314,7 @@ def parse(text):
         "columns": columns,
         "cells": cells,
         "constants": constants,
+        "dictionaries": dictionaries,
         "array_path": array_path,
         "key_column": key_column,
         "wrapper": wrapper,
@@ -312,6 +358,14 @@ def encode_cell(value, type_name=None):
         return ""
     if value is None:
         return NULL_CELL
+    if type_name == "dict":
+        # The value is already an index — table.remove_dictionaries substituted
+        # it. Handled by declared type rather than left to fall through to the
+        # int branch below, which would produce the same text today and stop
+        # doing so the moment anything about integers changes. Rule 4: the
+        # encoder and the decoder key off one source of truth, and for this
+        # column that source is the column's declared type.
+        return str(value)
     if type_name in ("json", "num"):
         # A "json" column is the mixed-type column: its values have no single
         # Python type, so the ONLY thing decode_cell can do is json.loads. That
@@ -376,6 +430,14 @@ def decode_cell(text, type_name):
     if text == EMPTY_ARRAY_CELL:
         return []
 
+    if type_name == "dict":
+        # The key into this column's #dict map, left as text rather than parsed
+        # to an int: JSON object keys are strings, so "0" is what the map is
+        # keyed by and int(text) produces a key that is not in it.
+        # table.restore_dictionaries does the lookup — doing it here would mean
+        # threading the dictionaries through every decode_cell call for the sake
+        # of one column type.
+        return text
     if type_name in ARRAY_TYPES:
         if type_name == "strs":
             return text.split(" ")

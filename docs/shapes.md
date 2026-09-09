@@ -1,21 +1,31 @@
 # What shapes Margin handles, and what it does with each
 
-Measured 2026-09-08 across eight payloads from eight different APIs. Every
+Measured 2026-09-09 across eight payloads from eight different APIs. Every
 number here is tokens under `cl100k_base`, measured against **the file as
 fetched** — not against `json.dumps` output, which pads with `", "` and `": "`
 that were never on disk (see `docs/thresholds.md`).
 
-| Payload | shape | raw | out | saved |
-|---|---|---:|---:|---:|
-| `github_issues.json` | bare list of records | 50,031 | 23,447 | **53.1%** |
-| `hn_stories.json` | records under `hits` | 35,585 | 20,284 | **43.0%** |
-| `coingecko_prices.json` | record **map** | 1,226 | 851 | **30.6%** |
-| `jsonplaceholder_posts.json` | 100 flat records | 8,761 | 6,437 | **26.5%** |
-| `graphql_countries.json` | records under `data.countries` | 13,011 | 11,547 | **11.3%** |
-| `pokeapi_ditto.json` | one deep object | 7,897 | 7,442 | **5.8%** |
-| `openmeteo_forecast.json` | already columnar | 3,638 | 3,638 | 0.0% |
-| `exchangerates_usd.json` | map of scalars | 1,420 | 1,420 | 0.0% |
-| **total** | | **121,569** | **75,066** | **38.3%** |
+| Payload | shape | raw | out | saved | was |
+|---|---|---:|---:|---:|---:|
+| `github_issues.json` | bare list of records | 50,031 | 22,372 | **55.3%** | 53.1% |
+| `hn_stories.json` | records under `hits` | 35,585 | 20,284 | **43.0%** | 43.0% |
+| `graphql_countries.json` | records under `data.countries` | 13,011 | 8,530 | **34.4%** | 11.3% |
+| `coingecko_prices.json` | record **map** | 1,226 | 851 | **30.6%** | 30.6% |
+| `jsonplaceholder_posts.json` | 100 flat records | 8,761 | 6,462 | **26.2%** | 26.5% |
+| `pokeapi_ditto.json` | one deep object | 7,897 | 7,465 | **5.5%** | 5.8% |
+| `openmeteo_forecast.json` | already columnar | 3,638 | 3,638 | 0.0% | 0.0% |
+| `exchangerates_usd.json` | map of scalars | 1,420 | 1,420 | 0.0% | 0.0% |
+| **total** | | **121,569** | **71,022** | **41.6%** | 38.3% |
+
+The `was` column is 2026-09-08, before `#dict`. Two payloads gained from it; the
+other six were already free of repeated values worth factoring out.
+
+Four payloads lost a little to legibility on the same day, and deliberately: the
+`#dict` line is keyed by index rather than being a bare list, and the legend now
+explains the repeating header. Together **+251 tokens, 0.3%** — bought by cold
+read #3, which miscounted a hand-counted total and could not verify an index 61
+deep into an unmarked array. `docs/cold-read-2026-09-09.md` has the reasoning;
+`HEADER_REPEAT_EVERY` made the same trade at the same price.
 
 **Nothing comes out larger than it went in.** That is enforced, not hoped for:
 `compress_json` takes the original text and refuses to return anything longer.
@@ -45,6 +55,20 @@ path then alphabetically). The others stay as JSON inside `#wrap`.
 Partial, deliberately. Multiple tables in one document would need a section
 marker and a second header, and no payload in the sample set yet shows a second
 array worth the format complexity. Build it when one does.
+
+### Columns drawn from a small set — `#dict`
+The gap `#const` left. That line states a value repeated in *every* row; this
+one states the handful a column actually draws from, and the cells become
+indices into it. `continent.name` across 250 countries is seven strings;
+`author_association` across 30 issues is three.
+
+Added 2026-09-09, worth 4,044 tokens net across the sample set. GitHub 53.1% →
+55.3%, GraphQL countries 11.3% → **34.4%**.
+
+Chosen by pricing both encodings, never by counting distinct values — see
+`docs/thresholds.md`. The ratio heuristic is wrong in both directions here:
+`languages` is 126 distinct across 250 rows and the biggest win in the set,
+while `capital` is 245 distinct across 250 and the biggest loss.
 
 ### Record maps — `{"bitcoin": {...}, "ethereum": {...}}`
 A dict whose values are all objects sharing one set of keys is a table whose
@@ -116,12 +140,26 @@ On `github_issues.json`, **82% of the remaining output is `body` prose**. On
 `hn_stories.json`, 67% is `children` — an array of comment IDs, already
 delta-encoded from 33,310 tokens to 13,525.
 
-No rule compresses English losslessly. Everything above is structural, and
-structure is close to exhausted: the measured headroom left from structural
-rules is roughly 7% on GitHub and near zero on HackerNews.
+No rule compresses English losslessly.
+
+**This section previously read "structure is close to exhausted… roughly 7%
+headroom on GitHub". That was wrong, and `#dict` is the counterexample:** it
+found 4,044 tokens the day after, 2,075 of them on GitHub. The claim was never
+measured — it was inferred from prose being the largest remaining share, which
+says what the biggest slice is and nothing about whether the rest is optimal.
+Rule 5 covers exactly this: a number in prose gets re-measured, not remembered.
+
+What is measurable now is where the tokens sit. Free text as a share of each
+payload's output:
+
+| `github_issues` | 82% | `hn_stories` | 13% | `jsonplaceholder` | 8% | other five | 0% |
+|---|---:|---|---:|---|---:|---|---:|
 
 Going further means not putting full prose in the prompt at all — a reversible
 store the model can query — which turns Margin from a text filter into a tool
-the model calls. That is a product decision, deliberately deferred, and it
-should be made against these eight payloads rather than the two that existed
-when it was first considered.
+the model calls. That is a product decision, deliberately deferred, and the
+table above is why it stays deferred: **86% of all the prose in the sample set
+is in one payload**, so the fork targets a problem seven of eight payloads do
+not have. Decided against eight payloads rather than the two that existed when
+it was first considered, which is what the previous version of this file asked
+for.

@@ -33,7 +33,7 @@ import sys
 import tempfile
 
 import render
-from compress import strip_boilerplate
+from compress import compress_json, strip_boilerplate
 from decompress import decompress
 from property_test import repeated
 from table import same_json
@@ -98,14 +98,28 @@ TABULATES = json.dumps(repeated(["kept", "together"], ["and", "apart"], rows=40)
 UNCHANGED = json.dumps({"hourly": {"time": list(range(50)), "temp": [1.5] * 50}},
                        separators=COMPACT)
 
+PIPE_BUFFER = 65536
+# macOS and Linux both default to a 64KB pipe. A document smaller than this is
+# written in full before the reader can close the pipe underneath it.
+
 # For the closed-pipe checks only, and the size is the whole point. TABULATES
-# compresses to 665 bytes, which fits entirely in the 64KB pipe buffer — the
-# writer finishes and exits 0 before `head -1` ever closes the pipe, so SIGPIPE
-# never fires and the checks named for it passed with the handler deleted.
-# 8,000 rows render to ~139KB, past the buffer, so the write actually blocks and
-# the signal actually arrives. Measured, not guessed.
-PIPE_FILLING = json.dumps(repeated(["kept", "together"], ["and", "apart"], rows=8000),
-                          separators=COMPACT)
+# compresses to 665 bytes, which fits entirely in the pipe buffer — the writer
+# finishes and exits 0 before `head -1` ever closes the pipe, so SIGPIPE never
+# fires and the checks named for it passed with the handler deleted.
+#
+# Deliberately incompressible, and that is a lesson rather than a detail. The
+# first version was `repeated(...)` at 8,000 rows, which rendered to ~139KB and
+# worked — until #dict landed, collapsed its two-distinct-value column to
+# indices, and dropped the document back under the buffer. Both pipe checks
+# failed on the spot, which is the gate working: a fixture that quietly stops
+# reaching its subject is the exact failure Rule 13 exists for, and here a
+# compression improvement was enough to cause it. Unique per-row strings cannot
+# be factored out by any rule this compressor has, so the document stays large
+# whatever gets added next.
+PIPE_FILLING = json.dumps(
+    [{"i": i, "blob": f"row-{i}-" + "abcdefghij"[i % 10] * 60} for i in range(1500)],
+    separators=COMPACT,
+)
 
 
 def nested(levels):
@@ -259,6 +273,15 @@ def main():
         writer.wait()
         reader.wait()
         return writer.returncode, first_line, err
+
+    # Rule 2, and the reason these two checks were worthless once already: if
+    # the document fits the pipe buffer, the pipe never closes under the writer
+    # and both checks below pass without provoking the signal they are named
+    # for. Assert the premise rather than trusting a row count to keep holding.
+    pipe_doc, _ = compress_json(json.loads(PIPE_FILLING), PIPE_FILLING)
+    check(f"the pipe fixture still exceeds the {PIPE_BUFFER}-byte pipe buffer",
+          len(pipe_doc.encode()) > PIPE_BUFFER,
+          f"document is {len(pipe_doc.encode())}B — the two checks below prove nothing")
 
     code, first_line, pipe_err = through_head([sys.executable, CLI])
     # Assert the SIGNAL, not just the absence of a traceback. "No traceback" is

@@ -1,6 +1,6 @@
 # The harness, and the rule each part enforces
 
-Five gates and twelve rules. Each rule exists because something got past the
+Six gates and thirteen rules. Each rule exists because something got past the
 gates before it, and each is written down with the failure that bought it — a
 rule whose reason is forgotten is a rule someone deletes.
 
@@ -8,6 +8,7 @@ rule whose reason is forgotten is a rule someone deletes.
 |---|---|---|
 | `src/property_test.py` | Does the format survive shapes nobody wrote down? | no — generates its own |
 | `src/cli_test.py` | Does the tool keep the promises the tool makes? | no — generates its own |
+| `src/mutation_test.py` | Can `cli_test.py` still fail? | no — mutates the source |
 | `src/eval_harness.py` | Do the answers survive on the payloads I have? | yes |
 | `.claude/hooks/run_eval.sh` | Did Claude's last edit break any of them? | no |
 | `.githooks/pre-commit` | Is this commit allowed to exist? | no |
@@ -206,11 +207,18 @@ and both times it found a real defect no automated gate could have seen.
 |---|---|---|---|
 | `docs/cold-read-2026-09-08.md` | 13/13 | 6/10 | drifted across a run of empty cells |
 | `docs/cold-read-2026-09-08b.md` | 16/16 | 7/10 | miscounted 13 positional columns; `json` used for a plainly numeric column; `#keyed"_key"` had no delimiter; the dotted-path convention was never stated |
+| `docs/cold-read-2026-09-09.md` | **11/12** | 8/10 | could not verify an index 61 deep into an unmarked `#dict` array, and **miscounted 58 as 57**; the repeating header was never explained, and reads as seven tables of 250 |
 
-The two near-misses are the same failure — counting positional values against a
-header some distance above — and both were caught by the reader recounting.
-"Caught by recounting" is luck about how careful the reader was, not a property
-of the format, so the header now repeats every 40 rows (+0.3%).
+All three are the same failure: **counting**. Reads #1 and #2 counted positional
+values against a header some distance above and caught themselves by recounting;
+read #3 could not verify an index 61 entries into an unmarked array, and on the
+very next question miscounted 58 as 57. "Caught by recounting" is luck about how
+careful the reader was, not a property of the format.
+
+So the format has now paid twice to remove counting: the header repeats every 40
+rows (+0.3%), and the `#dict` line is an object keyed by index rather than a
+bare list (+0.2%). Both times the alternative was to hope the reader counts
+carefully, and the third read is what that hope looks like when it fails.
 
 Correctness is not the same as legibility, and only this test tells them apart.
 
@@ -298,3 +306,52 @@ obvious one. Deleting the code under test is the easy check; the hard one is
 asking whether the *fixture* still reaches it. Five of the six were caught by a
 reviewer rather than by the person who wrote them, and three were introduced by
 the fix for the previous one.
+
+## Rule 13 — Automate the mutation, because intending to run it does not work
+
+Six instances of one habit, over three review rounds costing roughly 80,000
+tokens each, three of them introduced by the fix for the previous one. Writing
+the rule down did not stop it: Rule 12 was violated twice *after* it was
+written, once in its own fix.
+
+So it is a gate now. `src/mutation_test.py` breaks each guarded behaviour on a
+throwaway copy and demands **the check named for that behaviour** go red — not
+merely that the suite fails, because a mutation that trips an unrelated check
+looks exactly like coverage it does not have. Eight mutations, four seconds,
+wired into both hooks.
+
+Two details it needs, both learned immediately by getting them wrong:
+
+- **A missing anchor is a failure, not a skip.** If the source moved out from
+  under a mutation's search text, that mutation is testing nothing — which is
+  the Rule 12 failure again, inside the tool built to prevent it.
+- **The baseline must be checked first.** The suite's first version reported all
+  eight caught on a tree where two checks were *already failing*: every mutation
+  "made the gate fail" for free. A red baseline turns a mutation suite into a
+  machine that always says yes. That was instance seven, found in the file
+  itself within about ninety seconds of writing it — which is the argument for
+  the file. The check is cheap and the mistake is evidently not one that
+  intending to avoid it avoids.
+- **A mutation must name the gate that guards it**, and the baseline must then
+  check every gate any mutation names. Once format-level mutations went to
+  `property_test.py` while stream-level ones went to `cli_test.py`, checking one
+  file's baseline would have handed every dictionary mutation a free "caught"
+  while the other gate sat green. The same hole, one gate along.
+
+### It worked, the next day
+
+`#dict` shipped less than a day later, and the gate caught the failure mode it
+was built for, in a form nobody would have predicted: **a compression
+improvement broke a test by making its fixture too small.**
+
+`cli_test.py`'s two closed-pipe checks fed an 8,000-row payload chosen to render
+past the 64KB pipe buffer. `#dict` collapsed its low-cardinality column to
+indices, the document dropped under the buffer, the pipe stopped closing under
+the writer, and SIGPIPE stopped firing. Both checks went red immediately.
+
+Nothing was wrong with the code. The fixture had stopped reaching its subject —
+which is exactly instance five and six, arriving from a direction no reviewer
+had flagged and no author would have thought to re-check. The fix was a fixture
+of unique per-row strings that no compression rule can factor out, plus an
+assertion on the premise itself: **the document must exceed the pipe buffer**,
+checked rather than assumed.
