@@ -207,11 +207,18 @@ and both times it found a real defect no automated gate could have seen.
 |---|---|---|---|
 | `docs/cold-read-2026-09-08.md` | 13/13 | 6/10 | drifted across a run of empty cells |
 | `docs/cold-read-2026-09-08b.md` | 16/16 | 7/10 | miscounted 13 positional columns; `json` used for a plainly numeric column; `#keyed"_key"` had no delimiter; the dotted-path convention was never stated |
+| `docs/cold-read-2026-09-09.md` | **11/12** | 8/10 | could not verify an index 61 deep into an unmarked `#dict` array, and **miscounted 58 as 57**; the repeating header was never explained, and reads as seven tables of 250 |
 
-The two near-misses are the same failure — counting positional values against a
-header some distance above — and both were caught by the reader recounting.
-"Caught by recounting" is luck about how careful the reader was, not a property
-of the format, so the header now repeats every 40 rows (+0.3%).
+All three are the same failure: **counting**. Reads #1 and #2 counted positional
+values against a header some distance above and caught themselves by recounting;
+read #3 could not verify an index 61 entries into an unmarked array, and on the
+very next question miscounted 58 as 57. "Caught by recounting" is luck about how
+careful the reader was, not a property of the format.
+
+So the format has now paid twice to remove counting: the header repeats every 40
+rows (+0.3%), and the `#dict` line is an object keyed by index rather than a
+bare list (+0.2%). Both times the alternative was to hope the reader counts
+carefully, and the third read is what that hope looks like when it fails.
 
 Correctness is not the same as legibility, and only this test tells them apart.
 

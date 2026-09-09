@@ -54,8 +54,8 @@ Run `./.githooks/install.sh` once per clone — it copies the hooks into `.git/h
 `main`. Re-run `install.sh` after editing a hook.
 
 - **`.githooks/pre-commit`** — refuses commits on `main` outright; refuses any commit staging
-  `src/*.py` or `bin/margin` while `src/property_test.py`, `src/cli_test.py` or
-  `src/eval_harness.py` fails. The eval harness skips cleanly when `.venv` or the gitignored
+  `src/*.py` or `bin/margin` while `src/property_test.py`, `src/cli_test.py`,
+  `src/mutation_test.py` or `src/eval_harness.py` fails. The eval harness skips cleanly when `.venv` or the gitignored
   sample payload is missing (a fresh checkout has neither; that's not a regression); the property
   test and the CLI test generate their own payloads, so they always run.
 - **`src/mutation_test.py`** — breaks each guarded behaviour on a throwaway copy and demands the
@@ -65,7 +65,7 @@ Run `./.githooks/install.sh` once per clone — it copies the hooks into `.git/h
   Claude edit to `src/*.py` or `bin/margin` and exits 2 on failure, so a regression surfaces
   mid-session.
 
-**`docs/harness.md` is the rulebook — read it before changing the format.** Twelve rules, each
+**`docs/harness.md` is the rulebook — read it before changing the format.** Thirteen rules, each
 recorded with the failure that bought it. The three that catch people repeatedly:
 
 - A test of the format must assert the format was *used*. `compress_json` falls back to plain JSON
@@ -77,9 +77,9 @@ recorded with the failure that bought it. The three that catch people repeatedly
   ints as floats compared equal and shipped. Use `table.same_json` everywhere.
 
 Re-run the cold read whenever a **new cell encoding or format line** is added — that is precisely
-what a reader cannot infer and no automated gate can see. Two runs so far,
-`docs/cold-read-2026-09-08.md` and `-08b.md`; both scored every answer correct and both still found
-a real defect.
+what a reader cannot infer and no automated gate can see. Three runs so far, `-08`, `-08b` and
+`docs/cold-read-2026-09-09.md`, and every one found a real defect no gate could. All three had the
+same weak point — counting — and the third finally got an answer wrong because of it.
 
 ## The `development` → `main` gate (exercised, not just described)
 - [x] **PR-review gate.** The pre-commit hook blocks direct commits to `main`; the review step is
@@ -99,14 +99,14 @@ a real defect.
   round.
 
 ## Where things stand
-The compressor is done and merged (PR #1). Eight payloads from eight APIs, 121,569 → 70,771 tokens
-(**41.8%**), worst case 0.0% — nothing ever comes out larger than it went in. Per-payload numbers
+The compressor is done and merged (PR #1). Eight payloads from eight APIs, 121,569 → 71,022 tokens
+(**41.6%**), worst case 0.0% — nothing ever comes out larger than it went in. Per-payload numbers
 and the shapes behind them are in `docs/shapes.md`.
 
 `#dict` (2026-09-09) closed the gap `#const` left: a column drawn from a handful of repeated values
-is stated once and indexed. Worth 4,295 tokens — GitHub 53.1% → 55.4%, GraphQL countries 11.3% →
-**35.7%**. It also disproved this file's own claim that structural compression was nearly
-exhausted, which had never been measured.
+is stated once and indexed. Worth 4,044 tokens net — GitHub 53.1% → 55.3%, GraphQL countries 11.3% →
+**34.4%**, after paying 0.3% back for legibility (cold read #3). It also disproved this file's own
+claim that structural compression was nearly exhausted, which had never been measured.
 
 **It is now a tool you can actually use** (2026-09-09): `curl ... | margin | pbcopy`. Reads a path
 or stdin, document on stdout and everything else on stderr, and "returned the input unchanged"

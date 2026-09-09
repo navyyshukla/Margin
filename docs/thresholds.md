@@ -110,6 +110,15 @@ data: `languages` is 126 distinct across 250 rows — a ratio that looks hopeles
 objects. `capital` is 245 distinct across 250 and is the biggest loss. Only
 pricing both encodings tells them apart.
 
+**Keyed by index, not a bare list.** The `#dict` line is written as
+`{"0": value, "1": value, ...}` rather than `[value, value, ...]`, costing +151
+tokens across the sample set (+0.2%). Bought by cold read #3: asked for a value
+at index 61, the reader had to hand-count 61 entries into an 11KB single-line
+array, said there was "no way to verify an index", and on the next question
+miscounted 58 as 57. Counting has been the weak point of all three cold reads.
+`HEADER_REPEAT_EVERY` made the identical trade at +0.3% — see
+`docs/cold-read-2026-09-09.md`.
+
 **One trap worth recording.** The first version of the cost model priced the
 current cells with `json.dumps`, and a `str` cell is written **bare** in the
 document — so `"x"` was charged three characters where the document holds one.

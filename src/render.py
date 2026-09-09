@@ -126,6 +126,23 @@ def legend_for(table, encoded_rows):
     if any(cell == "" for row in encoded_rows for cell in row):
         seen.append("empty cell = key absent in that row")
 
+    # The repeated header, explained. Cold read #3 called this "the single most
+    # dangerous thing in the document": the `[250]{...}` line appears seven
+    # times, and nothing said whether that is one table reprinted for legibility
+    # or seven tables of 250. A reader taking the second meaning answers 1,750
+    # records. That reader resolved it only by counting 256 lines and
+    # subtracting the six repeats — arithmetic the document should not require,
+    # and it got the very next count wrong (57 African countries against 58).
+    #
+    # The repeat itself was added for the opposite complaint — cold reads #1 and
+    # #2 both drifted while counting columns against a header far above — so the
+    # fix was never to remove it, only to say what it is.
+    if len(encoded_rows) > HEADER_REPEAT_EVERY:
+        seen.append(
+            "the [N]{...} header repeats every "
+            f"{HEADER_REPEAT_EVERY} rows; it is one table, not a new one"
+        )
+
     # The most dangerous encoding in the format, and the reason is dints':
     # a `dict` cell holds a bare integer that looks exactly like data. A reader
     # who takes `continent.name` as 3 answers "3" instead of "Africa", with no
@@ -136,8 +153,8 @@ def legend_for(table, encoded_rows):
     # columns using it.
     if table.get("dictionaries"):
         seen.append(
-            "col:dict = the cell is a 0-based index into that column's list on "
-            "the #dict line, not a value"
+            "col:dict = the cell is a key into that column's object on the "
+            "#dict line; look it up there, the cell is not the value"
         )
 
     # #keyed is a structural line rather than a cell encoding, but it is the
@@ -414,10 +431,13 @@ def decode_cell(text, type_name):
         return []
 
     if type_name == "dict":
-        # The index into this column's #dict list. table.restore_dictionaries
-        # turns it back into the value; doing the lookup here would need the
-        # dictionaries threaded into every decode_cell call for one column type.
-        return int(text)
+        # The key into this column's #dict map, left as text rather than parsed
+        # to an int: JSON object keys are strings, so "0" is what the map is
+        # keyed by and int(text) produces a key that is not in it.
+        # table.restore_dictionaries does the lookup — doing it here would mean
+        # threading the dictionaries through every decode_cell call for the sake
+        # of one column type.
+        return text
     if type_name in ARRAY_TYPES:
         if type_name == "strs":
             return text.split(" ")

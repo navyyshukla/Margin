@@ -8,7 +8,7 @@ the answers I get back. Built as a learning project — rule-based first, revers
 feature at a time. See `CLAUDE.md` for the current architecture and decisions.
 
 **Status:** the JSON compressor works and is tested against eight different APIs.
-**41.8% overall**, and nothing ever comes out larger than it went in.
+**41.6% overall**, and nothing ever comes out larger than it went in.
 
 ```bash
 uv venv .venv && uv pip install -r requirements.txt   # once per clone
@@ -47,12 +47,12 @@ Measured across eight APIs (tokens under `cl100k_base`, against the file as fetc
 
 | Payload | shape | saved |
 |---|---|---:|
-| GitHub issues | bare list of records | **55.4%** |
+| GitHub issues | bare list of records | **55.3%** |
 | HackerNews (Algolia) | records under `hits` | **43.0%** |
-| GraphQL countries | records under `data.countries` | **35.7%** |
+| GraphQL countries | records under `data.countries` | **34.4%** |
 | CoinGecko prices | record map | **30.6%** |
-| JSONPlaceholder posts | 100 flat records | **26.5%** |
-| PokéAPI (one Pokémon) | single deep object | **5.8%** |
+| JSONPlaceholder posts | 100 flat records | **26.2%** |
+| PokéAPI (one Pokémon) | single deep object | **5.5%** |
 | Open-Meteo forecast | already columnar | 0.0% |
 | Exchange rates | map of scalars | 0.0% |
 
@@ -68,7 +68,7 @@ outcomes rather than gaps.
   before and after compression; any drift fails the build.
 - **Readable by a model, not just by a parser.** The document explains its own
   encodings, and that claim is checked by giving it to a model with no access to
-  this repo — see `docs/cold-read-2026-09-08.md`.
+  this repo — see `docs/cold-read-2026-09-09.md`.
 - **Every number measured, never copied.** Including from Headroom, whose
   thresholds would reject most of the results above (`docs/thresholds.md`).
 

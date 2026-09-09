@@ -386,8 +386,21 @@ def dictionary_columns(flat_rows):
     github_issues repeats two distinct `reactions` objects across 30 rows for
     1,320 tokens, and graphql_countries repeats seven continents across 250.
 
-    Returns {column: [distinct values, first-seen order]}, empty when nothing
-    clears MIN_DICT_SAVING.
+    Returns {column: {"0": value, "1": value, ...}}, empty when nothing clears
+    MIN_DICT_SAVING.
+
+    Keyed by index rather than a bare list, which costs +151 tokens across the
+    eight payloads (+0.2%) and buys the one thing the third cold read said it
+    could not verify. Asked for India's languages, the reader had to hand-count
+    61 entries into an 11KB unmarked array; it got the right answer by
+    cross-checking neighbouring countries and said plainly that there was "no
+    way to verify an index". On the same document it hand-counted Africa's
+    countries and answered 57 against a true 58.
+
+    Counting is now the failure mode in all three cold reads — two near-misses
+    and one wrong answer — and HEADER_REPEAT_EVERY paid +0.3% to settle the same
+    complaint about columns. A lookup the reader can confirm beats one it has to
+    count.
 
     Decided by measuring both encodings, never by counting distinct values.
     graphql_countries' `languages` is 126 distinct across 250 rows — a ratio
@@ -410,8 +423,9 @@ def dictionary_columns(flat_rows):
         if len(distinct) < 2 or len(distinct) == len(values):
             continue
 
-        if _cells_cost(values) - _dictionary_cost(key, distinct, values) >= MIN_DICT_SAVING:
-            dictionaries[key] = distinct
+        entries = {str(index): value for index, value in enumerate(distinct)}
+        if _cells_cost(values) - _dictionary_cost(key, entries, values) >= MIN_DICT_SAVING:
+            dictionaries[key] = entries
     return dictionaries
 
 
@@ -450,17 +464,17 @@ def _cells_cost(values):
     return sum(token_count(encode_cell(v, type_name)) for v in values)
 
 
-def _dictionary_cost(key, distinct, values):
+def _dictionary_cost(key, entries, values):
     """What they would cost as a #dict entry plus one index per row.
 
-    Counts the key name and the JSON punctuation as well as the values: the
-    #dict line is text in the document like any other, and a gate that ignored
-    its own overhead would approve dictionaries that lose.
+    Counts the key name, the index keys and the JSON punctuation as well as the
+    values: the #dict line is text in the document like any other, and a gate
+    that ignored its own overhead would approve dictionaries that lose.
     """
-    entry = json.dumps({key: distinct}, separators=(",", ":"))
+    entry = json.dumps({key: entries}, separators=(",", ":"))
     # Index tokens scale with how many rows there are, not how many distinct
     # values, so charge the average index cost to every row.
-    per_row = sum(token_count(str(index)) for index in range(len(distinct))) / len(distinct)
+    per_row = sum(token_count(index) for index in entries) / len(entries)
     return token_count(entry) + round(per_row * len(values))
 
 
@@ -475,10 +489,10 @@ def remove_dictionaries(flat_rows, dictionaries):
     replaced = []
     for row in flat_rows:
         new_row = dict(row)
-        for key, distinct in dictionaries.items():
+        for key, entries in dictionaries.items():
             if key in new_row and new_row[key] is not None:
                 new_row[key] = next(
-                    index for index, value in enumerate(distinct)
+                    index for index, value in entries.items()
                     if _same_value(new_row[key], value)
                 )
         replaced.append(new_row)
@@ -490,9 +504,9 @@ def restore_dictionaries(flat_rows, dictionaries):
     restored = []
     for row in flat_rows:
         new_row = dict(row)
-        for key, distinct in dictionaries.items():
+        for key, entries in dictionaries.items():
             if key in new_row and new_row[key] is not None:
-                new_row[key] = distinct[new_row[key]]
+                new_row[key] = entries[new_row[key]]
         restored.append(new_row)
     return restored
 

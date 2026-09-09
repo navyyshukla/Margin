@@ -7,18 +7,25 @@ that were never on disk (see `docs/thresholds.md`).
 
 | Payload | shape | raw | out | saved | was |
 |---|---|---:|---:|---:|---:|
-| `github_issues.json` | bare list of records | 50,031 | 22,336 | **55.4%** | 53.1% |
+| `github_issues.json` | bare list of records | 50,031 | 22,372 | **55.3%** | 53.1% |
 | `hn_stories.json` | records under `hits` | 35,585 | 20,284 | **43.0%** | 43.0% |
-| `graphql_countries.json` | records under `data.countries` | 13,011 | 8,363 | **35.7%** | 11.3% |
+| `graphql_countries.json` | records under `data.countries` | 13,011 | 8,530 | **34.4%** | 11.3% |
 | `coingecko_prices.json` | record **map** | 1,226 | 851 | **30.6%** | 30.6% |
-| `jsonplaceholder_posts.json` | 100 flat records | 8,761 | 6,437 | **26.5%** | 26.5% |
-| `pokeapi_ditto.json` | one deep object | 7,897 | 7,442 | **5.8%** | 5.8% |
+| `jsonplaceholder_posts.json` | 100 flat records | 8,761 | 6,462 | **26.2%** | 26.5% |
+| `pokeapi_ditto.json` | one deep object | 7,897 | 7,465 | **5.5%** | 5.8% |
 | `openmeteo_forecast.json` | already columnar | 3,638 | 3,638 | 0.0% | 0.0% |
 | `exchangerates_usd.json` | map of scalars | 1,420 | 1,420 | 0.0% | 0.0% |
-| **total** | | **121,569** | **70,771** | **41.8%** | 38.3% |
+| **total** | | **121,569** | **71,022** | **41.6%** | 38.3% |
 
-The `was` column is 2026-09-08, before `#dict`. Two payloads moved; the other
-six were already free of repeated values worth factoring out.
+The `was` column is 2026-09-08, before `#dict`. Two payloads gained from it; the
+other six were already free of repeated values worth factoring out.
+
+Four payloads lost a little to legibility on the same day, and deliberately: the
+`#dict` line is keyed by index rather than being a bare list, and the legend now
+explains the repeating header. Together **+251 tokens, 0.3%** — bought by cold
+read #3, which miscounted a hand-counted total and could not verify an index 61
+deep into an unmarked array. `docs/cold-read-2026-09-09.md` has the reasoning;
+`HEADER_REPEAT_EVERY` made the same trade at the same price.
 
 **Nothing comes out larger than it went in.** That is enforced, not hoped for:
 `compress_json` takes the original text and refuses to return anything longer.
@@ -55,8 +62,8 @@ one states the handful a column actually draws from, and the cells become
 indices into it. `continent.name` across 250 countries is seven strings;
 `author_association` across 30 issues is three.
 
-Added 2026-09-09, worth 4,295 tokens across the sample set. GitHub 53.1% →
-55.4%, GraphQL countries 11.3% → **35.7%**.
+Added 2026-09-09, worth 4,044 tokens net across the sample set. GitHub 53.1% →
+55.3%, GraphQL countries 11.3% → **34.4%**.
 
 Chosen by pricing both encodings, never by counting distinct values — see
 `docs/thresholds.md`. The ratio heuristic is wrong in both directions here:
@@ -137,7 +144,7 @@ No rule compresses English losslessly.
 
 **This section previously read "structure is close to exhausted… roughly 7%
 headroom on GitHub". That was wrong, and `#dict` is the counterexample:** it
-found 4,295 tokens the day after, 2,111 of them on GitHub. The claim was never
+found 4,044 tokens the day after, 2,075 of them on GitHub. The claim was never
 measured — it was inferred from prose being the largest remaining share, which
 says what the biggest slice is and nothing about whether the rest is optimal.
 Rule 5 covers exactly this: a number in prose gets re-measured, not remembered.
