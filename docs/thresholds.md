@@ -128,6 +128,66 @@ by pricing with `render.encode_cell`, the encoder that actually writes the
 document. The general form is Rule 4: a gate has to price the output that will
 really be produced, not a stand-in for it.
 
+## `MIN_STORE_SAVING = 20` (src/store.py)
+
+Tokens a single cell must save before its content moves out of the document and
+into the store. Same unit and the same reasoning as `MIN_DICT_SAVING`, and
+arrived at the same way — by pricing, never by a size heuristic.
+
+Derived 2026-09-10 by `src/measure_store.py`, which **renders the whole sample
+set at each candidate bar** rather than summing per-cell arithmetic:
+
+| bar | cells stored | set total |
+|---:|---:|---:|
+| 1 | 257 | 73.3% |
+| 5 | 209 | 73.2% |
+| 10 | 187 | 73.1% |
+| **20** | **166** | **72.8%** |
+| 50 | 67 | 70.1% |
+| 100 | 63 | 69.9% |
+
+The curve is flat to 20 and falls away after it: 20 keeps 99% of the saving
+while storing 91 fewer cells. Positive rather than zero for the reason
+`MIN_DICT_SAVING` is — a cell that breaks even still costs the reader a *fetch*
+to recover a value it could have read in place, and a fetch is far more expensive
+to a reader than a dictionary lookup.
+
+**The projection was checked against the real thing, and it had to be.** The
+first version of `measure_store.py` summed the cost of cells priced one at a
+time. Rendering the same documents disagreed by up to **86 tokens, 2.9% on
+`jsonplaceholder`** — tiktoken is context dependent, so a cell priced alone does
+not cost what it costs inside a CSV line — and it charged the fixed `#store` cost
+to payloads that store nothing and carry no `#store` line at all. There is now
+one path to a document size and no second one to disagree with it. Rule 1's
+shape, on a measurement rather than an encoder.
+
+Projected 74.6% for the encoding that was chosen; the implementation landed at
+**74.4%**, the gap explained by the real `\@0001` being one character longer than
+the `@0001` that was priced.
+
+### The handle's own encoding, measured
+
+| encoding | example | set total |
+|---|---|---:|
+| hex-4 | `@3f9a` | 74.3% |
+| hex-8 | `@3f9a2c1b` | 73.5% |
+| hex-12 | `@3f9a2c1b7e4d` | 72.8% |
+| hex-16 | `@3f9a2c1b7e4d5a6b` | 72.2% |
+| **per-document id** | `@0001` | **74.6%** |
+
+Putting the content hash straight in the document costs **1.8 points, ~2,200
+tokens** against a short id. So the document carries a short per-document id and
+the store keeps the `id -> hash` index **on disk**, where it never costs a prompt
+token. Content addressing survives the indirection, which is the point: objects
+still dedupe, and `get` still verifies that content hashes to its own name rather
+than trusting the filename.
+
+A shorter hash was the obvious compromise and is not safe: hex-8 is 32 bits, and
+at ~10⁴ cells the birthday probability is over 1%. A collision serves one cell's
+content for another's, which is data loss — the one outcome "never
+delete-and-hope" rules out. 12 hex is 48 bits, under 10⁻⁹, and `put` refuses to
+overwrite differing bytes anyway.
+
 ## `MIN_ROWS_TO_TABULATE = 2` (src/compress.py)
 
 The table's fixed cost is one header line, so it can only pay off once a key
