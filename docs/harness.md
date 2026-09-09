@@ -119,6 +119,19 @@ Two specific traps found this way:
 - **A fixed seed, always.** A gate that fails one commit in twenty gets
   bypassed, and a bypassed gate is not a gate. Hunt for new bugs by passing a
   different seed explicitly.
+- **A filter that silently matches nothing inflates the count.** 2026-09-10, in
+  the PR that reorganised this file: "the rules are cited from 51 places, 34 of
+  them in `src/*.py`" was written into four documents and a commit message. The
+  real figures are **27 and 20**. The inventory had excluded this file's own
+  self-references with `grep -v "^./docs/harness.md"` — but the paths printed as
+  `docs/harness.md:123`, with no `./`, so the filter matched nothing and 20
+  self-references were counted as external citations.
+
+  The number *was* measured, which is what makes it worth recording: measuring
+  is not enough if nothing checks that the measurement's own filter did anything.
+  Same shape as Rule 12 — a check aimed near the claim is not a check aimed at
+  it — and it was caught in twenty seconds by re-deriving the figure, which is
+  the cheap half of Rule 5 and the half that was skipped.
 
 ## Rule 6 — A test case must declare what should happen, not just "it worked"
 

@@ -26,9 +26,9 @@ the only time they matter.
 - **Where two functions are inverses, they must key off the same source of
   truth** — which is why the writer and reader both live in `src/render.py`.
 
-Rule numbers in comments (`Rule 4`, `Rule 9`, …) refer to `docs/harness.md`. They
-are cited from 51 places, 34 of them in these files, so **do not renumber them**;
-new rules append.
+Rule numbers in comments (`Rule 4`, `Rule 9`, …) refer to `docs/harness.md`.
+**20 of them are in these files** — 10 in `cli_test.py` alone — out of 27 across
+the repo (measured 2026-09-10), so **do not renumber them**; new rules append.
 
 Before changing a test, a threshold or the document format, load the **`harness`
 skill** — it holds the checklist for what a change like that owes.
