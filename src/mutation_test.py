@@ -151,6 +151,59 @@ MUTATIONS = [
         "MUST_DICTIONARY",
         gate="property_test.py",
     ),
+    # The store. Same reasoning as the dictionary mutations — format-level
+    # behaviour, so property_test.py is the gate, and each names the specific
+    # check that must go red rather than "the suite fails".
+    Mutation(
+        "the store is switched off: nothing is ever stashed",
+        "src/store.py",
+            "            if csv_field_cost(text) < threshold:\n"
+            "                continue",
+            "            if True:\n"
+            "                continue",
+        "MUST_STORE (no #store line)",
+        gate="property_test.py",
+    ),
+    Mutation(
+        "cells are stashed but the #store line is never written",
+        "src/compress.py",
+        '                table["store"] = doc_id',
+        "                pass",
+        "MUST_STORE",
+        gate="property_test.py",
+    ),
+    Mutation(
+        "the store commits even when the document is abandoned",
+        "src/compress.py",
+        "    if pending and final is text:",
+        "    if pending:",
+        "abandoned document left content behind",
+        gate="property_test.py",
+    ),
+    Mutation(
+        "a document decompresses without the store its values live in",
+        "src/decompress.py",
+        "        if store is None:",
+        "        if False:",
+        "MUST_STORE (decompressed without its store)",
+        gate="property_test.py",
+    ),
+    Mutation(
+        "the index keeps entries the document never references",
+        "src/store.py",
+        "def orphaned_ids(index, used_ids):",
+        "def orphaned_ids(index, used_ids):\n    return []",
+        "completeness detectors do not detect",
+        gate="property_test.py",
+    ),
+    Mutation(
+        "a missing object in the store is reported as fine",
+        "src/store.py",
+        "    return sorted(cell_id for cell_id, name in index.items() if not store.has(name))",
+        "    return []",
+        "completeness detectors do not detect",
+        gate="property_test.py",
+    ),
     Mutation(
         "bin/margin loses its symlink-resolution loop",
         "bin/margin",

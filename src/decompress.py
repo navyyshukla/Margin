@@ -15,20 +15,37 @@ import json
 import sys
 
 import render
+import store as store_module
 from table import rebuild_rows, rows_to_map
 
 
-def decompress(text):
+def decompress(text, store=None):
     """Compressed document -> JSON data.
 
     Anything that is not a #margin/v1 document is plain JSON — that is what the
     savings gate emits when a table would not have been worth it, so this has
     to read both.
+
+    `store` is required only by a document carrying a #store line. Without it
+    this raises, rather than handing back rows with Handle objects sitting where
+    values should be: a caller that got those would serialise them to something
+    meaningless and never learn the payload was incomplete. A store is the first
+    thing in this pipeline that can lose half a document while looking fine.
     """
     if not text.startswith(render.FORMAT_MARKER):
         return json.loads(text)
 
     table = render.parse(text)
+
+    doc_id = table.get("store")
+    if doc_id:
+        if store is None:
+            raise ValueError(
+                f"this document's values live in a store ({doc_id}) and no store "
+                f"was given — decompressing without it would silently drop them"
+            )
+        store_module.restore_handles(table, store.read_index(doc_id), store)
+
     rows = rebuild_rows(table)
 
     # Records that came from a dict go back into one. The key column carries

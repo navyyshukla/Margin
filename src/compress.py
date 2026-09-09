@@ -22,6 +22,7 @@ import json
 import sys
 
 import render
+import store as store_module
 from decompress import decompress
 from tokens import token_count
 from table import MIN_ROWS_TO_TABULATE, build_table, find_record_array, same_json
@@ -143,8 +144,15 @@ MIN_TABLE_SAVING = 0.05
 # Deliberately NOT Headroom's 0.30, which would reject all but one of these.
 
 
-def compress_json(data, original_text=None):
+def compress_json(data, original_text=None, store=None):
     """Full pipeline. Returns (text, notes).
+
+    `store`, when given, is where bulk cells go instead of into the document —
+    each becomes a `\\@nnnn` handle and the content is written to the store. When
+    it is None nothing about this function changes, which is deliberate: every
+    gate that existed before the store still exercises the storeless path, and a
+    payload with no cell worth storing produces a byte-identical document either
+    way.
 
     original_text, when given, is the payload exactly as it arrived. It is used
     for one thing: making sure the output is never longer than the input. A
@@ -186,8 +194,28 @@ def compress_json(data, original_text=None):
     # correct, emit JSON" — instead of two, and means an unanticipated payload
     # degrades to plain JSON rather than crashing the compressor.
     try:
-        text = render.render(build_table(rows, array_path, wrapper, key_column))
-        restored = decompress(text)
+        table = build_table(rows, array_path, wrapper, key_column)
+
+        pending = {}
+        doc_id = None
+        if store is not None:
+            pending = store_module.stash_bulk_cells(table)
+            # Only when something was actually stored. A document that stores
+            # nothing must not carry a #store line pointing at an empty index —
+            # it would be a claim with nothing behind it, and it would make the
+            # storeless and stored paths produce different bytes for payloads
+            # where the store does nothing (five of the eight samples).
+            if pending:
+                doc_id = store_module.document_id(as_json)
+                table["store"] = doc_id
+
+        text = render.render(table)
+        # Verified against staged content, never against the real store: every
+        # check below can still abandon this document, and content written for a
+        # document nobody emits is an orphan nothing will ever collect.
+        restored = decompress(
+            text, store_module.staged(doc_id, pending) if pending else store
+        )
     except Exception as exc:
         return result(as_json, [f"table render/parse failed ({type(exc).__name__}: {exc})"])
 
@@ -201,7 +229,15 @@ def compress_json(data, original_text=None):
     if saving < MIN_TABLE_SAVING:
         return result(as_json, [f"table saved only {saving:.1%} — below MIN_TABLE_SAVING"])
 
-    return result(text, [])
+    final, notes = result(text, [])
+
+    # The only place anything is written to the real store, and it is after every
+    # path that can still discard this document — including result(), which hands
+    # back the original when the table did not actually beat it. `is`, not `==`:
+    # the question is whether this exact document is the one being returned.
+    if pending and final is text:
+        store_module.commit(store, doc_id, pending)
+    return final, notes
 
 
 if __name__ == "__main__":

@@ -58,9 +58,27 @@ KEYED_PREFIX = "#keyed "
 # holding what was the dict key. Without it the rows would come back as a list
 # and the identities would be data in a column rather than the keys they were.
 
+STORE_PREFIX = "#store"
+# Names the index this document's handles are ids into. Written only when at
+# least one cell was actually stored, so a document with nothing bulk in it
+# carries neither this line nor its legend entry and is byte-identical to what
+# the same payload produced before the store existed.
+
 NULL_CELL = "\\N"
 EMPTY_STRING_CELL = "\\E"
 EMPTY_ARRAY_CELL = "\\A"
+
+HANDLE_PREFIX = "\\@"
+# A stored cell reads `\@0001`. Deliberately inside the existing backslash
+# namespace rather than a new one: encode_cell already escapes any string
+# starting with `\` by doubling it, so a literal value of `\@0001` writes as
+# `\\@0001` and the two can never be confused — and `\\@...` does not start with
+# `\@`, so the test below is exact rather than nearly right (Rule 12's shape).
+#
+# A bare `@` marker was the obvious choice and was rejected for exactly this:
+# `@` is an ordinary character in real data, so it would have needed a new
+# escaping rule of its own, and every cold read so far has found its defects in
+# the parts of the format a reader has to infer.
 # [] would otherwise render as the empty string, which already means "key absent
 # in this row" — the same collapse \E exists to prevent for "".
 
@@ -84,6 +102,12 @@ LEGEND_ENTRIES = [
     (NULL_CELL, r"\N = null"),
     (EMPTY_STRING_CELL, r"\E = empty string"),
     (EMPTY_ARRAY_CELL, r"\A = empty array"),
+    # The only legend entry describing something the reader cannot see at all.
+    # It says outright that the value is absent and has to be fetched, because
+    # the failure mode this stage introduces is a reader answering from the
+    # columns around a handle instead of admitting it needs the content.
+    (HANDLE_PREFIX, r"\@nnnn = this value is NOT in this document; fetch id nnnn "
+                    r"from the store named on the #store line"),
 ]
 
 
@@ -116,7 +140,16 @@ def legend_for(table, encoded_rows):
 
     seen = []
     for marker, description in LEGEND_ENTRIES:
-        present = marker in types if marker in ARRAY_TYPES else marker in cells
+        if marker in ARRAY_TYPES:
+            present = marker in types
+        elif marker == HANDLE_PREFIX:
+            # The one marker that is a prefix rather than a whole cell, because
+            # every handle carries its own id. Still exact in the way that
+            # matters: an escaped literal renders as `\\@...`, whose first two
+            # characters are two backslashes, so it cannot match `\@`.
+            present = any(cell.startswith(HANDLE_PREFIX) for cell in cells)
+        else:
+            present = marker in cells
         if present and description not in seen:
             seen.append(description)
 
@@ -212,6 +245,11 @@ def render(table):
     if table.get("dictionaries"):
         lines.append(DICT_PREFIX + json.dumps(table["dictionaries"], separators=(",", ":")))
 
+    # Last of the preamble lines, immediately above the header: a reader meeting
+    # `\@0001` in a cell looks upward, and this is the nearest thing to the rows.
+    if table.get("store"):
+        lines.append(STORE_PREFIX + json.dumps(table["store"], separators=(",", ":")))
+
     header_cols = ",".join(
         f"{c['name']}:{c['type']}{'?' if c['nullable'] else ''}"
         for c in table["columns"]
@@ -278,6 +316,11 @@ def parse(text):
         dictionaries = json.loads(lines[index][len(DICT_PREFIX):])
         index += 1
 
+    store_id = None
+    if index < len(lines) and lines[index].startswith(STORE_PREFIX):
+        store_id = json.loads(lines[index][len(STORE_PREFIX):])
+        index += 1
+
     count, columns = parse_header(lines[index])
     index += 1
 
@@ -318,6 +361,7 @@ def parse(text):
         "array_path": array_path,
         "key_column": key_column,
         "wrapper": wrapper,
+        "store": store_id,
     }
 
 
@@ -348,6 +392,30 @@ def parse_header(line):
     return count, columns
 
 
+class Handle:
+    """A cell whose content lives in the store, not in the document.
+
+    A sentinel object rather than a marked-up string, for the reason MISSING is
+    one: any string chosen to mean "this is a handle" is a string some payload
+    can legitimately contain, and then the encoder and the reader disagree about
+    a cell. An object cannot be forged by data.
+    """
+
+    __slots__ = ("cell_id",)
+
+    def __init__(self, cell_id):
+        self.cell_id = cell_id
+
+    def __eq__(self, other):
+        return isinstance(other, Handle) and other.cell_id == self.cell_id
+
+    def __hash__(self):
+        return hash(("Handle", self.cell_id))
+
+    def __repr__(self):
+        return f"Handle({self.cell_id!r})"
+
+
 def encode_cell(value, type_name=None):
     """One JSON value -> the text that goes in a CSV cell.
 
@@ -356,6 +424,12 @@ def encode_cell(value, type_name=None):
     """
     if value is MISSING:
         return ""
+    if isinstance(value, Handle):
+        # Checked before everything else, and before the declared type: a stored
+        # cell is a handle whatever its column says it holds, which is precisely
+        # why the column's type is still the truth about the *content* and is
+        # what decode_cell uses to rebuild it.
+        return HANDLE_PREFIX + value.cell_id
     if value is None:
         return NULL_CELL
     if type_name == "dict":
@@ -423,6 +497,15 @@ def decode_cell(text, type_name):
     """
     if text == "":
         return MISSING
+    if text.startswith(HANDLE_PREFIX):
+        # Before the type dispatch, because a stored cell in a `json` column
+        # would otherwise be handed to json.loads. Left as a Handle rather than
+        # resolved here for the same reason a `dict` cell is left as text:
+        # resolving needs the store, and threading the store through every
+        # decode_cell call would put it in the path of every cell in every
+        # document to serve the few that are stored. store.restore_handles does
+        # the lookup, the way table.restore_dictionaries does.
+        return Handle(text[len(HANDLE_PREFIX):])
     if text == NULL_CELL:
         return None
     if text == EMPTY_STRING_CELL:
