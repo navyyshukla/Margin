@@ -149,17 +149,38 @@ measured — it was inferred from prose being the largest remaining share, which
 says what the biggest slice is and nothing about whether the rest is optimal.
 Rule 5 covers exactly this: a number in prose gets re-measured, not remembered.
 
-What is measurable now is where the tokens sit. Free text as a share of each
-payload's output:
+What is measurable now is where the tokens sit — **measured in document terms**,
+which is the cost that actually ships:
 
-| `github_issues` | 82% | `hn_stories` | 13% | `jsonplaceholder` | 8% | other five | 0% |
-|---|---:|---|---:|---|---:|---|---:|
+| Payload | bulk content | share of its output |
+|---|---:|---:|
+| `jsonplaceholder_posts` | 5,743 | **89%** |
+| `github_issues` | 19,669 | **88%** |
+| `hn_stories` | 15,172 | **75%** |
+| `graphql_countries` | 1,750 | 21% |
+| `pokeapi_ditto`, `coingecko_prices` | 0 | 0% |
+| **whole set** | **42,334** | **60%** of 71,022 |
 
-Going further means not putting full prose in the prompt at all — a reversible
+"Bulk" means free-text fields plus `children` — content a question is answered
+*from*, not *with*, and which no lossless rule reduces.
+
+**An earlier version of this section put the figure at "82% of one payload, near
+zero in five others" and concluded the store "targets a problem seven of eight
+payloads do not have". That was wrong twice over**, and both mistakes came from
+measuring prose rather than bulk:
+
+- It counted only strings over 200 characters, which missed
+  `jsonplaceholder_posts` entirely — 89% of that payload is short bodies.
+- It excluded `children` because comment IDs are not prose. They are 13,525
+  tokens, **19% of the entire sample set's output**, and they are exactly the
+  kind of content the store exists to keep out of a prompt.
+
+Rule 5 again, on a number that was one day old: the shape of the measurement
+decided the answer, and the shape was chosen to match a hypothesis instead of
+the thing being measured.
+
+Going further means not putting bulk content in the prompt at all — a reversible
 store the model can query — which turns Margin from a text filter into a tool
-the model calls. That is a product decision, deliberately deferred, and the
-table above is why it stays deferred: **86% of all the prose in the sample set
-is in one payload**, so the fork targets a problem seven of eight payloads do
-not have. Decided against eight payloads rather than the two that existed when
-it was first considered, which is what the previous version of this file asked
-for.
+the model calls. That is a product decision and it reverses "no proxy server,
+not yet". The corrected census is the case *for* it: 60% of what is left, across
+four of eight payloads, is content no rule here will ever compress.

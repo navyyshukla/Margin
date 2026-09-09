@@ -99,9 +99,14 @@ same weak point — counting — and the third finally got an answer wrong becau
   round.
 
 ## Where things stand
-The compressor is done and merged (PR #1). Eight payloads from eight APIs, 121,569 → 71,022 tokens
-(**41.6%**), worst case 0.0% — nothing ever comes out larger than it went in. Per-payload numbers
-and the shapes behind them are in `docs/shapes.md`.
+**The compressor is finished.** Three PRs, all merged: #1 the compressor, #2 the `margin` CLI,
+#3 `#dict`. Eight payloads from eight APIs, 121,569 → 71,022 tokens (**41.6%**), worst case 0.0% —
+nothing ever comes out larger than it went in. Per-payload numbers and the shapes behind them are
+in `docs/shapes.md`.
+
+Nothing is outstanding and no gate is red. Do not open another compression rule without a measured
+reason: the remaining headroom is one payload-specific trick worth 1,500 tokens, and the other 60%
+belongs to the store.
 
 `#dict` (2026-09-09) closed the gap `#const` left: a column drawn from a handful of repeated values
 is stated once and indexed. Worth 4,044 tokens net — GitHub 53.1% → 55.3%, GraphQL countries 11.3% →
@@ -124,14 +129,20 @@ further means a reversible store the model can query — which turns Margin from
 **tool the model calls**, reversing "no proxy server, not yet" above. Worth ~92% on GitHub.
 
 `docs/shapes.md` said to decide it against all eight payloads rather than the two that existed when
-it was first raised. Measured: prose is 82% of `github_issues`, 13% of `hn_stories`, 8% of
-`jsonplaceholder`, and **0% of the other five**. 86% of all the prose in the sample set sits in one
-payload, so the fork targets a problem seven of eight payloads do not have — a much weaker case
-than "~92% on GitHub" sounds, and it still reverses a standing decision.
+it was first raised. Measured properly, in document terms: **60% of what remains (42,334 of 71,022
+tokens) is bulk content** — free text plus HackerNews's 6,662 comment IDs — and it is 89% of
+`jsonplaceholder`, 88% of `github_issues`, 75% of `hn_stories`.
 
-Deferred again, and the remaining precondition is unchanged and unmet: **use**. Run `margin` on
-real payloads for a while. What it turns out to need daily is the evidence this decision was
-deliberately made to wait for — not another round of measuring the same eight files.
+A first attempt at this measurement counted only prose over 200 characters, put the figure at "one
+payload out of eight", and nearly settled the question the wrong way. It missed
+`jsonplaceholder`'s short bodies and excluded `children` for not being prose. See `docs/shapes.md`
+— the correction is recorded there because the wrong version was about to become the reason not
+to build this.
+
+**Structural compression is finished.** The only candidate left in the sample set is
+`graphql_countries.emoji` (1,500 tokens, derivable from the `code` column since a flag emoji is
+its ISO code in regional-indicator characters) — declined, because one rule for one API is the
+over-reach "one job, done well" forbids. Everything else needs the store.
 
 ## Open TODOs
 - [ ] Nothing harness-level.
