@@ -1,14 +1,11 @@
 # Cold read #2, 2026-09-08
 
-Owed by `docs/harness.md` Rule 10: `#keyed` is a new format element, and a new
-format element is exactly what a reader cannot infer and no automated gate can
-see.
+Owed by `#keyed`, a new format line. Method and running score:
+[`docs/cold-reads.md`](cold-reads.md).
 
-Same method as the first read: a model given only the rendered documents, told
-to read nothing else, write no parsing code, and say "not answerable from this
-document" rather than guess. Three payloads — CoinGecko (a record map),
-GraphQL countries (records two levels down, nulls, emoji, nested objects), and
-PokéAPI Ditto (one deep object where most of the data rides in `#wrap`).
+Three payloads — CoinGecko (a record map), GraphQL countries (records two levels
+down, nulls, emoji, nested objects), and PokéAPI Ditto (one deep object where
+most of the data rides in `#wrap`).
 
 ## Result: 16 of 16 correct
 
@@ -78,8 +75,5 @@ That is the correct outcome and it is accepted deliberately — the alternative 
 giving up repeated headers, which two cold reads say are worth more than this
 case costs. It lives in `MAY_DEGRADE`, not `MUST_TABULATE`.
 
-## Standing rule, unchanged
-
-Re-run this whenever a new cell encoding or format line is added. Two reads in,
-its record is: every factual answer correct both times, and both times it found
-a real defect that no automated gate could have seen.
+When the read is owed again, and the running score:
+[`docs/cold-reads.md`](cold-reads.md).

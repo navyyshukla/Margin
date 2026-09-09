@@ -200,14 +200,10 @@ The standing procedure: give the rendered document to a reader with **no access
 to this repo** and ask it to answer the eval questions plus "what was ambiguous?".
 Claude's own reading does not count — it designed the format.
 
-Two runs so far, and its record is: every factual answer correct both times,
-and both times it found a real defect no automated gate could have seen.
-
-| | answers | confidence | what it found |
-|---|---|---|---|
-| `docs/cold-read-2026-09-08.md` | 13/13 | 6/10 | drifted across a run of empty cells |
-| `docs/cold-read-2026-09-08b.md` | 16/16 | 7/10 | miscounted 13 positional columns; `json` used for a plainly numeric column; `#keyed"_key"` had no delimiter; the dotted-path convention was never stated |
-| `docs/cold-read-2026-09-09.md` | **11/12** | 8/10 | could not verify an index 61 deep into an unmarked `#dict` array, and **miscounted 58 as 57**; the repeating header was never explained, and reads as seven tables of 250 |
+**The procedure in full, and the running scoreboard, are in
+[`docs/cold-reads.md`](cold-reads.md)** — one copy, because a score kept in three
+places drifts on the next read. Three runs so far, and every one found a real
+defect no automated gate could have seen.
 
 All three are the same failure: **counting**. Reads #1 and #2 counted positional
 values against a header some distance above and caught themselves by recounting;
