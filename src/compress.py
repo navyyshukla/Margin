@@ -206,7 +206,7 @@ def compress_json(data, original_text=None, store=None):
             # storeless and stored paths produce different bytes for payloads
             # where the store does nothing (five of the eight samples).
             if pending:
-                doc_id = store_module.document_id(as_json)
+                doc_id = store_module.document_id(as_json, pending)
                 table["store"] = doc_id
 
         text = render.render(table)

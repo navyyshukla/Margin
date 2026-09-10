@@ -67,6 +67,8 @@ STORE_PREFIX = "#store"
 NULL_CELL = "\\N"
 EMPTY_STRING_CELL = "\\E"
 EMPTY_ARRAY_CELL = "\\A"
+# [] would otherwise render as the empty string, which already means "key absent
+# in this row" — the same collapse \E exists to prevent for "".
 
 HANDLE_PREFIX = "\\@"
 # A stored cell reads `\@0001`. Deliberately inside the existing backslash
@@ -79,8 +81,6 @@ HANDLE_PREFIX = "\\@"
 # `@` is an ordinary character in real data, so it would have needed a new
 # escaping rule of its own, and every cold read so far has found its defects in
 # the parts of the format a reader has to infer.
-# [] would otherwise render as the empty string, which already means "key absent
-# in this row" — the same collapse \E exists to prevent for "".
 
 # Column types whose cells are space-separated scalars instead of JSON. Decided
 # in table.scalar_array_type; written and read here.
@@ -102,14 +102,12 @@ LEGEND_ENTRIES = [
     (NULL_CELL, r"\N = null"),
     (EMPTY_STRING_CELL, r"\E = empty string"),
     (EMPTY_ARRAY_CELL, r"\A = empty array"),
-    # The only legend entry describing something the reader cannot see at all.
-    # It says outright that the value is absent and has to be fetched, because
-    # the failure mode this stage introduces is a reader answering from the
-    # columns around a handle instead of admitting it needs the content.
-    # The only legend entry that names a tool. A document is supposed to be
-    # self-describing, and one whose values live elsewhere is not self-describing
-    # unless it says how to reach them — a reader that has the fetch tool but
-    # cannot tell that these handles are what it is for gets the worst of both.
+    # The only entry describing something the reader cannot see at all, and the
+    # only one that names a tool. Both matter: it says outright that the value is
+    # absent, because the failure this stage introduces is a reader answering
+    # from the columns around a handle instead of admitting it needs the
+    # content — and it says what resolves it, because a document whose values
+    # live elsewhere is not self-describing unless it says how to reach them.
     (HANDLE_PREFIX, r"\@nnnn[Nt] = this value is NOT in this document; N is what "
                     r"it costs in tokens. Resolve with the margin `fetch` tool: "
                     r"fetch(document=<id on the #store line>, ids=[nnnn, ...])"),

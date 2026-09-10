@@ -136,6 +136,11 @@ def build_document(store_root):
     payload = [
         {"i": 0, "body": BODY_A},
         {"i": 1, "body": BODY_B},
+        # Bigger than MAX_RESPONSE_TOKENS on its own. A body this size is
+        # exactly what MIN_STORE_SAVING sends to the store, and it used to be
+        # permanently unfetchable: the cap dropped it and the response told the
+        # model to try again, which failed identically every time.
+        {"i": 99, "body": "An enormous body that no single response can hold. " * 2200},
         *({"i": n, "body": f"filler body number {n} words words words " * 260}
           for n in range(2, 8)),
     ]
@@ -183,6 +188,13 @@ def main():
             check("fetch: ids are accepted as written in the document",
                   BODY_A[:60] in loose and BODY_B[:60] in loose, loose[:200])
 
+            # Finding from review: the #store line renders as `#store"22c8..."`
+            # and the legend says to pass "the id on the #store line", so a model
+            # copying it verbatim brings the quotes along.
+            quoted = text_of(server.call("fetch", {"document": f'"{doc_id}"', "ids": ["0001"]}))
+            check("the document id is accepted with the quotes the #store line shows",
+                  BODY_A[:60] in quoted, quoted[:200])
+
             hit = text_of(server.call(
                 "fetch", {"document": doc_id, "ids": ["0001"], "query": "session cookie"}))
             check("query: returns the matching span, not the whole value",
@@ -223,8 +235,26 @@ def main():
                   weight > MAX_RESPONSE_TOKENS, f"{weight} vs {MAX_RESPONSE_TOKENS}")
 
             big = text_of(server.call("fetch", {"document": doc_id, "ids": batch}))
-            check("an over-cap batch truncates and says which ids it dropped",
-                  "TRUNCATED" in big, big[-200:])
+            check("an over-cap batch defers the ids it could not fit",
+                  "DEFERRED" in big, big[-200:])
+
+            # The finding this check exists for: a value larger than the whole
+            # cap must come back truncated and labelled, never deferred — no
+            # second call could ever fit it, so deferring is an instruction to
+            # loop. Asserted on content, not just on the word, because a
+            # response that says TRUNCATED and returns nothing is the bug.
+            # `has` first: an earlier check deletes an object on purpose, and
+            # index_now still lists it.
+            disk = store_module.FileStore(root)
+            oversized = next(i for i in index_now
+                             if disk.has(index_now[i])
+                             and token_count(disk.get(index_now[i])) > MAX_RESPONSE_TOKENS)
+            huge = text_of(server.call("fetch", {"document": doc_id, "ids": [oversized]}))
+            check("fixture: one stored value really exceeds the whole cap", bool(oversized))
+            check("a value larger than the cap returns a labelled first part, not nothing",
+                  "TRUNCATED" in huge and "An enormous body" in huge
+                  and token_count(huge) <= MAX_RESPONSE_TOKENS + 200,
+                  f"{token_count(huge)} tokens; {huge[:160]}")
         finally:
             server.close()
 

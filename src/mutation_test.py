@@ -226,9 +226,9 @@ MUTATIONS = [
     Mutation(
         "the response cap is removed",
         "src/mcp_server.py",
-        "        if spent + cost > MAX_RESPONSE_TOKENS:",
+        "        if cost > remaining:",
         "        if False:",
-        "over-cap batch truncates",
+        "over-cap batch defers",
         gate="mcp_test.py",
     ),
     Mutation(
@@ -246,6 +246,22 @@ MUTATIONS = [
         '            content = "\\n…\\n".join(spans)',
         "            content = content",
         "returns the matching span",
+        gate="mcp_test.py",
+    ),
+    Mutation(
+        "an oversized value is deferred instead of truncated (a fetch loop)",
+        "src/mcp_server.py",
+        "            if spent:",
+        "            if True:",
+        "larger than the cap returns a labelled first part",
+        gate="mcp_test.py",
+    ),
+    Mutation(
+        "the document id is not normalised, so the quoted form fails",
+        "src/mcp_server.py",
+        "    document = document.strip().strip('\"').strip()",
+        "    pass",
+        "accepted with the quotes",
         gate="mcp_test.py",
     ),
     Mutation(

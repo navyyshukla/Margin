@@ -1,2 +1,2 @@
 tiktoken
-mcp
+mcp>=2.2

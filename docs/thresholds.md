@@ -165,6 +165,39 @@ Projected 74.6% for the encoding that was chosen; the implementation landed at
 **74.4%**, the gap explained by the real `\@0001` being one character longer than
 the `@0001` that was priced.
 
+### `MAX_RESPONSE_TOKENS = 8000` (src/mcp_server.py)
+
+What one `fetch` call may return. Measured 2026-09-10 against **every value the
+sample set actually stores** — 171 of them, across the three payloads the store
+helps:
+
+| median | p90 | p95 | p99 | max |
+|---:|---:|---:|---:|---:|
+| 53 | 631 | 885 | 1,916 | 2,313 |
+
+8,000 is ~3.5× the largest value this data produces, so no single fetch in the
+sample set is ever truncated, while still admitting a dozen median values before
+the cap bites.
+
+It read "roughly a large issue body, times a few" until review pointed out that
+this project measures its thresholds and that **this one has teeth**: it is what
+makes an oversized value unreturnable if the surrounding code gets that case
+wrong. Which it did — see below.
+
+**The case the number made reachable.** The cap was applied as
+`spent + cost > MAX_RESPONSE_TOKENS`, evaluated with `spent == 0` for the first
+id. A single value larger than the whole cap was therefore dropped, with a
+message telling the model to *"fetch them in a second call"* — advice that fails
+identically every time, which is a loop rather than an error. A 15,000-token
+issue body is exactly what `MIN_STORE_SAVING` sends to the store, so it was
+reachable on real data. Now a value that cannot fit is returned **truncated and
+labelled as a first part**, and only ids crowded out by *other* ids are deferred.
+
+`QUERY_CONTEXT_CHARS = 240` is a legibility knob rather than a threshold, and is
+chosen rather than measured — but its downside is bounded, not open:
+`_spans_matching` hands back the whole value when the spans do not come to less
+than it, so a too-generous window can never cost more than not querying at all.
+
 ### `HASH_WIDTH = 24` (src/store.py) — and it was 12, wrongly
 
 96 bits, for both the content hash and the document id. **This was 12 (48 bits),

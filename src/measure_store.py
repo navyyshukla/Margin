@@ -45,9 +45,7 @@ Usage:  python src/measure_store.py [data/samples/*.json]
         (no arguments: every payload in data/samples/)
 """
 
-import csv
 import glob
-import io
 import json
 import os
 import sys
@@ -58,12 +56,12 @@ from compress import COMPACT, skeleton, strip_boilerplate
 from table import build_table, find_record_array
 from tokens import token_count
 
-# A handle has to be long enough that two different bodies never collide into
-# one — a collision is silent data loss, which is the failure this project's
-# first decision ("never delete-and-hope") rules out. 12 hex characters is 48
-# bits; across the ~10^4 distinct cells in this sample set the birthday
-# probability is under 10^-9. Priced rather than assumed: report_encodings()
-# shows what every other width would buy, so this is a choice and not a default.
+# A 12-hex sample, kept only so report_encodings() has a fixed point to compare
+# widths against. It is NOT a recommendation: the shipped hash is 24 hex
+# (store.HASH_WIDTH), and the 48-bit justification that used to sit here — "under
+# 10^-9 across the ~10^4 cells in this sample set" — is the scope-wrong reasoning
+# docs/thresholds.md records as corrected. Leaving the refuted version in the
+# file someone reads while re-measuring is exactly how a wrong number comes back.
 HANDLE_SAMPLE = "@3f9a2c1b7e4d"
 
 # What a document pays once for carrying a store: the #store line naming where
@@ -73,25 +71,15 @@ HANDLE_SAMPLE = "@3f9a2c1b7e4d"
 STORE_LINE = '#store{"kind":"file","root":".margin/store"}'
 STORE_LEGEND = "@xxx = fetch this id from the store; the value is not in this document"
 
-# The default qualifying bar, in tokens saved by one cell. Chosen from the curve
-# report_thresholds() prints rather than picked: see docs/thresholds.md.
-MIN_STORE_SAVING = 20
+# Taken from the store rather than re-declared. This file exists to sweep the bar
+# and the store exists to apply it, so two copies of one tuned number would drift
+# the moment either moved — Rule 4's shape, on a threshold instead of an encoder.
+MIN_STORE_SAVING = store_module.MIN_STORE_SAVING
 
 
-def csv_field_cost(text):
-    """Tokens for one cell as the document writes it, quoting included.
-
-    Used only to decide whether a cell qualifies — a local, per-cell question.
-    The document's total is never summed from this; see render_with_store.
-
-    render.py writes cells through csv.writer, which wraps a field in quotes and
-    doubles interior quotes when it contains a comma, a quote or a newline. Prose
-    cells hit all three, so pricing the bare text under-charges exactly the cells
-    this measurement is about.
-    """
-    buffer = io.StringIO()
-    csv.writer(buffer, lineterminator="").writerow([text])
-    return token_count(buffer.getvalue())
+# The store's own cost model, not a second copy of it. A measurement that prices
+# cells differently from the code it is measuring is measuring something else.
+csv_field_cost = store_module.csv_field_cost
 
 
 def lure(cell_id, text, chars=48, show_tokens=True):

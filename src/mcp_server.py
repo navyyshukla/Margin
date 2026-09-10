@@ -37,13 +37,26 @@ from mcp.server.mcpserver import MCPServer
 import store as store_module
 from tokens import token_count
 
-# Roughly the size of a large issue body, times a few. Generous enough that a
-# normal fetch is never truncated and small enough that a careless batch cannot
-# spend the whole window. Stated in the response when it bites, never silent.
+# Measured 2026-09-10 against every value the sample set actually stores
+# (171 of them, across the three payloads the store helps):
+#
+#     median 53    p90 631    p95 885    p99 1,916    max 2,313
+#
+# So 8,000 is ~3.5x the largest value this data produces — no single fetch in
+# the sample set is ever truncated — while still letting a batch of a dozen
+# median values through before the cap bites. It was "roughly a large issue
+# body, times a few" until the review pointed out that this project measures its
+# thresholds, and that this one has teeth: it is what makes an oversized value
+# unreturnable if the code gets that case wrong. Derivation in
+# docs/thresholds.md.
 MAX_RESPONSE_TOKENS = 8000
 
-# How much context to give either side of a query match. Two sentences is enough
-# to tell whether a hit is the one you wanted without returning the paragraph.
+# How much text to give either side of a query match. This one is a legibility
+# knob rather than a threshold, and it is chosen rather than measured — but its
+# downside is bounded rather than open: _spans_matching hands back the whole
+# value if the spans do not come to less than it, so a too-generous window can
+# never cost more than not querying at all. 240 characters is two or three
+# sentences, enough to tell whether a hit is the one you wanted.
 QUERY_CONTEXT_CHARS = 240
 
 server = MCPServer(
@@ -62,6 +75,22 @@ server = MCPServer(
 def _open_store():
     """The store the CLI wrote to. One place, so the two cannot disagree."""
     return store_module.FileStore(store_module.default_root())
+
+
+def _clip_to_tokens(text, budget):
+    """The longest prefix of `text` costing no more than `budget` tokens.
+
+    Characters are the knob and tokens are the constraint, so this narrows by
+    ratio and then walks down — a few iterations, and never a result over
+    budget, which a single ratio estimate could not promise.
+    """
+    if budget <= 0:
+        return ""
+    clipped = text
+    while clipped and token_count(clipped) > budget:
+        ratio = budget / token_count(clipped)
+        clipped = clipped[:max(1, int(len(clipped) * ratio * 0.95))]
+    return clipped
 
 
 def _spans_matching(text, query):
@@ -119,6 +148,14 @@ def fetch(document: str, ids: list[str], query: str | None = None) -> str:
     if not ids:
         return "No ids requested. Pass the numbers from the \\@nnnn handles you want."
 
+    # Normalised the way ids are, and for the same reason. The document renders
+    # its id as `#store"22c8..."` — JSON-quoted — and the legend tells the reader
+    # to pass "the id on the #store line". A model copying that line verbatim
+    # hands over the quotes with it. Three lines were spent making ids forgiving;
+    # withholding the same courtesy here is how a correct call gets "No store
+    # index" and the reader concludes the document is broken.
+    document = document.strip().strip('"').strip()
+
     backing = _open_store()
     try:
         index = backing.read_index(document)
@@ -130,7 +167,7 @@ def fetch(document: str, ids: list[str], query: str | None = None) -> str:
 
     parts = []
     spent = 0
-    truncated = []
+    deferred = []
 
     for cell_id in ids:
         # Normalised, because a model reading `\@0001[142t]` may well pass
@@ -161,17 +198,44 @@ def fetch(document: str, ids: list[str], query: str | None = None) -> str:
             content = "\n…\n".join(spans)
 
         cost = token_count(content)
-        if spent + cost > MAX_RESPONSE_TOKENS:
-            truncated.append(key)
+        remaining = MAX_RESPONSE_TOKENS - spent
+
+        if cost > remaining:
+            if spent:
+                # Room ran out because of what came before it. Deferring is
+                # honest here: a second call with fewer ids will fit.
+                deferred.append(key)
+                continue
+
+            # Nothing has been returned yet and this one value is bigger than
+            # the whole cap, so no second call can ever fit it. The first
+            # version deferred this case too and told the model to "fetch them
+            # in a second call" — advice that fails identically every time,
+            # which is a loop rather than an error. A 15,000-token issue body
+            # is exactly what MIN_STORE_SAVING sends to the store, so this was
+            # reachable on real data.
+            #
+            # Truncating is the lesser evil against never returning it at all,
+            # but only if the model is told plainly — a partial value read as a
+            # whole one is the silent-partial-output failure again.
+            head = _clip_to_tokens(content, remaining)
+            spent = MAX_RESPONSE_TOKENS
+            parts.append(
+                f"[{key}] TRUNCATED — this single value is {cost} tokens, larger "
+                f"than the {MAX_RESPONSE_TOKENS}-token cap, so a second call "
+                f"cannot return it whole either. What follows is the FIRST PART "
+                f"ONLY. Pass `query` to get the part you actually need.\n{head}"
+            )
             continue
+
         spent += cost
         parts.append(f"[{key}]\n{content}")
 
-    if truncated:
+    if deferred:
         parts.append(
-            f"TRUNCATED: {', '.join(truncated)} not included — the response hit the "
-            f"{MAX_RESPONSE_TOKENS}-token cap. Fetch them in a second call, or pass "
-            f"`query` to get only the parts you need."
+            f"DEFERRED: {', '.join(deferred)} not included — the response hit the "
+            f"{MAX_RESPONSE_TOKENS}-token cap. Fetch them in a second call with "
+            f"fewer ids, or pass `query` to get only the parts you need."
         )
 
     return "\n\n".join(parts)

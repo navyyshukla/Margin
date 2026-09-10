@@ -115,15 +115,30 @@ def content_hash(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:HASH_WIDTH]
 
 
-def document_id(payload_text):
+def document_id(payload_text, pending=None):
     """The name a document's index is filed under.
 
     Derived from the payload rather than from the rendered document, which would
     be circular: the document cannot contain the id of an index built while
     rendering it. A content-derived id also means recompressing the same payload
     reuses its index instead of accumulating one per run.
+
+    **`pending` is folded in, and leaving it out was a real hole.** The id used
+    to hash the payload alone, so it did not change when the *set of stashed
+    cells* changed. Move MIN_STORE_SAVING — a documented tunable — or change
+    encode_cell, recompress the same payload, and `commit` overwrote
+    docs/<doc_id>.json with a different id -> hash map. A document emitted by
+    the earlier run and still sitting in a chat then resolved `\@0003` to some
+    other cell's content: plausible wrong content, no error, which is precisely
+    the failure HASH_WIDTH was widened to prevent. Now a different stash is a
+    different document.
     """
-    return hashlib.sha256(payload_text.encode("utf-8")).hexdigest()[:HASH_WIDTH]
+    material = payload_text
+    if pending:
+        material += "\x00" + "\x00".join(
+            f"{cell_id}={content_hash(text)}" for cell_id, text in sorted(pending.items())
+        )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:HASH_WIDTH]
 
 
 def format_id(number):
@@ -229,9 +244,27 @@ class FileStore:
                 if handle.read() != data:
                     raise ValueError(f"hash collision on {name} — refusing to overwrite")
             return name
+        # Atomically, for the same reason the index is — and the first version's
+        # justification for *not* doing this was wrong. `write_index` argued
+        # that "objects are content-addressed, so a torn write there is
+        # harmless". It is not: two places byte-compare the file. A concurrent
+        # `put` reaching the branch above reads a half-written object, sees
+        # bytes that differ, and raises "hash collision — refusing to
+        # overwrite", which compress_json now catches and degrades to plain
+        # JSON — so a second `margin --store` running in parallel silently
+        # loses its table. A concurrent `get` raises "does not hash to its own
+        # name — content changed". Both messages are confidently wrong about
+        # the cause, which is exactly what the CRLF bug did.
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "wb") as handle:
-            handle.write(data)
+        fd, temp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+            os.replace(temp, path)
+        except BaseException:
+            if os.path.exists(temp):
+                os.unlink(temp)
+            raise
         return name
 
     def get(self, name):
@@ -248,14 +281,15 @@ class FileStore:
         return os.path.exists(self._object_path(name))
 
     def write_index(self, doc_id, mapping):
-        """Atomically, because this is the only mutable file in the store.
+        """Atomically. Temp file in the *same directory* — os.replace is only
+        atomic within a filesystem — then replace.
 
-        Objects are content-addressed: writing one twice writes the same bytes,
-        so a torn write there is harmless. An index is not — two `margin`
-        invocations racing on one doc_id could interleave into a half-written
-        JSON file, and a corrupt index means every handle in that document
-        resolves to nothing. Temp file in the *same directory* (os.replace is
-        only atomic within a filesystem), then replace.
+        Two `margin` invocations racing on one doc_id could otherwise interleave
+        into a half-written JSON file, and a corrupt index means every handle in
+        that document resolves to nothing.
+
+        `put` does the same, and this docstring used to argue it did not need
+        to. That argument was wrong; see the comment there.
         """
         path = self._index_path(doc_id)
         os.makedirs(os.path.dirname(path), exist_ok=True)
