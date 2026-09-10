@@ -235,8 +235,23 @@ def compress_json(data, original_text=None, store=None):
     # path that can still discard this document — including result(), which hands
     # back the original when the table did not actually beat it. `is`, not `==`:
     # the question is whether this exact document is the one being returned.
+    #
+    # Guarded, because this function's contract is to fall back to plain JSON
+    # rather than raise, and a commit can fail for reasons that have nothing to
+    # do with the payload: a full disk, a read-only store, a genuine hash
+    # collision. The first version left this outside the guard entirely, so a
+    # store that could not be written took the whole compressor down instead of
+    # degrading — found by the mutation that reintroduced the text-mode read bug,
+    # which turned every second write into a "collision" and revealed that the
+    # commit had no guard at all.
+    #
+    # A document whose handles were never stored is worse than useless, so the
+    # fallback is the whole document, not a partial one.
     if pending and final is text:
-        store_module.commit(store, doc_id, pending)
+        try:
+            store_module.commit(store, doc_id, pending)
+        except Exception as exc:
+            return result(as_json, [f"store write failed ({type(exc).__name__}: {exc})"])
     return final, notes
 
 

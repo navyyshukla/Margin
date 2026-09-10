@@ -53,6 +53,7 @@ import os
 import sys
 
 import render
+import store as store_module
 from compress import COMPACT, skeleton, strip_boilerplate
 from table import build_table, find_record_array
 from tokens import token_count
@@ -93,7 +94,26 @@ def csv_field_cost(text):
     return token_count(buffer.getvalue())
 
 
-def render_with_store(table, handle=HANDLE_SAMPLE, min_saving=MIN_STORE_SAVING):
+def lure(cell_id, text, chars=48, show_tokens=True):
+    """A handle that tells the reader what it is choosing whether to fetch.
+
+    `\\@0001` on its own says nothing at all. A reader cannot tell whether it
+    wants that value, so it either fetches every handle — which costs more than
+    never having stored them — or fetches none and answers from the columns
+    around it, which is the failure mode that would make this whole stage worse
+    than useless. Headroom's equivalent marker carries a description and an item
+    count for exactly this reason.
+
+    The id stays fixed-width and leading, so the decoder still reads it as
+    text[2:6] with no delimiter parsing; everything after is for the reader.
+    """
+    head = " ".join(text.split())[:chars]
+    size = f"[{token_count(text)}t] " if show_tokens else ""
+    return f"{render.HANDLE_PREFIX}{cell_id}{size}{head}"
+
+
+def render_with_store(table, handle=HANDLE_SAMPLE, min_saving=MIN_STORE_SAVING,
+                      handle_for=None):
     """Render the document this table would produce with a store behind it.
 
     Returns (cells_stored, document_tokens). This is the only place a projected
@@ -122,7 +142,16 @@ def render_with_store(table, handle=HANDLE_SAMPLE, min_saving=MIN_STORE_SAVING):
                 # The handle is a plain string, so encode_cell writes it
                 # verbatim and csv.writer quotes it exactly as it would any
                 # other cell. Nothing here bypasses the real renderer.
-                out_row.append(handle)
+                #
+                # The qualifying decision above still uses the *bare* handle's
+                # cost, deliberately: whether a cell is worth storing is a
+                # property of the cell, and letting a longer lure disqualify
+                # cells would silently shrink what gets stored while measuring
+                # the lure's price. One variable at a time.
+                out_row.append(
+                    handle_for(store_module.format_id(stored), text)
+                    if handle_for else handle
+                )
             else:
                 out_row.append(value)
         cells.append(out_row)
@@ -254,6 +283,39 @@ def report_encodings(results):
         print(f"{label:>20}{sample:>20}{1 - total / raw:>11.1%}")
 
 
+def report_lures(results):
+    """What a lure costs, whole set. The reader gains; the prompt pays."""
+    print("\nhandle lure (whole sample set, default bar)")
+    print(f"{'variant':>34}{'set total':>12}{'vs bare':>10}")
+    raw = sum(item["raw"] for item in results)
+
+    def total(handle_for):
+        out = 0
+        for item in results:
+            if item["reason"]:
+                out += item["raw"]
+                continue
+            out += render_with_store(item["table"], handle_for=handle_for)[1]
+        return out
+
+    bare = total(None)
+    variants = [
+        # The baseline must be the handle actually shipped, not HANDLE_SAMPLE's
+        # hex-12 default -- comparing lures against a *different* encoding made
+        # "tokens only" look 761 tokens CHEAPER than bare, which is Rule 5's
+        # shape again: a baseline that is not what it claims to be.
+        ("bare  \\@0001", lambda i, t: lure(i, t, chars=0, show_tokens=False)),
+        ("tokens only  \\@0001[142t]", lambda i, t: lure(i, t, chars=0)),
+        ("prefix 32", lambda i, t: lure(i, t, chars=32, show_tokens=False)),
+        ("tokens + prefix 32", lambda i, t: lure(i, t, chars=32)),
+        ("tokens + prefix 48", lambda i, t: lure(i, t, chars=48)),
+        ("tokens + prefix 80", lambda i, t: lure(i, t, chars=80)),
+    ]
+    for label, fn in variants:
+        out = total(fn)
+        print(f"{label:>34}{1 - out / raw:>11.1%}{(out - bare):>+10}")
+
+
 def main(argv):
     paths = argv[1:] or sorted(glob.glob("data/samples/*.json"))
     if not paths:
@@ -264,6 +326,7 @@ def main(argv):
     report(results)
     report_thresholds(results)
     report_encodings(results)
+    report_lures(results)
 
     priced = [item for item in results if not item["reason"]]
     if priced:

@@ -41,6 +41,7 @@ import hashlib
 import io
 import json
 import os
+import tempfile
 
 import render
 from tokens import token_count
@@ -62,15 +63,44 @@ from tokens import token_count
 # expensive to a reader than a dictionary lookup.
 MIN_STORE_SAVING = 20
 
-# Enough hex to make a collision impossible in practice rather than merely
-# unlikely: 12 characters is 48 bits, so at the ~10^4 distinct cells across the
-# whole sample set the birthday probability is under 10^-9. A collision would
-# silently serve one cell's content for another's, which is data loss, so this
-# is sized against the failure and not against disk.
+# 24 hex characters, 96 bits, for both the content hash and the document id.
+# A collision serves one cell's content for another's, which is data loss, so
+# this is sized against the failure and not against disk.
 #
-# `put` also refuses to overwrite an existing object whose bytes differ, so a
-# collision would raise rather than corrupt even if one ever happened.
-HASH_WIDTH = 12
+# It is very nearly free. The content hash is not in the document at all — that
+# is what the id/index indirection bought — so its width costs nothing. The
+# document id *is* in the document, on the #store line, and widening it from 12
+# to 24 measured at **1 token per document**; 21 tokens across the whole sample
+# set, which leaves the set total at 74.4%. Nothing to economise against.
+#
+# A doc_id collision is worse than an object collision, which is the other
+# reason both are wide: two payloads sharing a doc_id means one document's
+# handles resolve against the other's index, and every handle then returns
+# *plausible wrong content* rather than failing.
+#
+#   objects   48 bits   96 bits
+#      10^4   1.8e-07   6.3e-22
+#      10^6   1.8e-03   6.3e-18
+#      10^7   1.8e-01   6.3e-16
+#
+# **This was 12 (48 bits), and the comment justifying it was wrong in a way
+# worth keeping** (harness.md Rule 5): it said "under 10^-9 at the ~10^4
+# distinct cells across the whole sample set". The arithmetic was right and the
+# *scope* was wrong. A sample set is not the population — this store is one
+# global namespace with no eviction that accumulates for years, so n is total
+# objects ever written, not cells in one run. At 10^6 the real figure is 0.18%,
+# and a personal store reaches 10^6 in a year of piping curl output.
+#
+# Found by comparing against Headroom, which uses 96 bits here and documents it
+# against birthday bounds. Their store survives at any width because it evicts
+# on a 30-minute TTL, which is what keeps their n small; ours has no such bound,
+# and that difference is exactly what the original comment failed to notice.
+#
+# `put` also refuses to overwrite an existing object whose bytes differ. That is
+# a backstop, not a mitigation: it converts a collision into a hard failure in
+# the *compress* path — a payload that inexplicably will not compress — so it
+# argues for a wider hash rather than excusing a narrow one.
+HASH_WIDTH = 24
 
 # Four digits, zero padded, so ids sort and read consistently. Measured at
 # ~2 tokens against ~6 for a 12-hex hash. 9,999 stored cells in one document is
@@ -169,26 +199,45 @@ class FileStore:
     def _index_path(self, doc_id):
         return os.path.join(self.root, "docs", doc_id + ".json")
 
+    # Objects are read and written as BYTES, never in text mode.
+    #
+    # This was text mode, and it was broken for any content containing a
+    # carriage return — which is most real prose, because GitHub issue bodies
+    # are CRLF. Python's text mode applies universal-newline translation on
+    # read, so `\r\n` came back as `\n`, the read-back never equalled what was
+    # written, and the two places that compare content both misread that as
+    # corruption: `put` reported a hash collision and refused to store, and
+    # `get` would have reported that the content had changed under it. Both
+    # messages were confidently wrong about the cause.
+    #
+    # No gate saw it, because every gate used MemoryStore — property_test.py
+    # runs thousands of trials and a store that writes files is a store nobody
+    # keeps in a gate. So FileStore, the implementation that actually ships, had
+    # no coverage at all. That is Rule 12 at its most literal: the environment
+    # the check runs in was not the environment the code runs in. Found by
+    # running `margin --store` on a real payload, which is Rule 11's argument
+    # for exercising the everyday invocation.
     def put(self, text):
+        data = text.encode("utf-8")
         name = content_hash(text)
         path = self._object_path(name)
         if os.path.exists(path):
             # Read before writing rather than assuming the name proves the
             # bytes. If these ever differ it is a collision, and overwriting
             # would destroy whichever cell got there first.
-            with open(path, encoding="utf-8") as handle:
-                if handle.read() != text:
+            with open(path, "rb") as handle:
+                if handle.read() != data:
                     raise ValueError(f"hash collision on {name} — refusing to overwrite")
             return name
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(text)
+        with open(path, "wb") as handle:
+            handle.write(data)
         return name
 
     def get(self, name):
         try:
-            with open(self._object_path(name), encoding="utf-8") as handle:
-                text = handle.read()
+            with open(self._object_path(name), "rb") as handle:
+                text = handle.read().decode("utf-8")
         except FileNotFoundError:
             raise KeyError(name) from None
         if content_hash(text) != name:
@@ -199,10 +248,27 @@ class FileStore:
         return os.path.exists(self._object_path(name))
 
     def write_index(self, doc_id, mapping):
+        """Atomically, because this is the only mutable file in the store.
+
+        Objects are content-addressed: writing one twice writes the same bytes,
+        so a torn write there is harmless. An index is not — two `margin`
+        invocations racing on one doc_id could interleave into a half-written
+        JSON file, and a corrupt index means every handle in that document
+        resolves to nothing. Temp file in the *same directory* (os.replace is
+        only atomic within a filesystem), then replace.
+        """
         path = self._index_path(doc_id)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as handle:
-            json.dump(mapping, handle, separators=(",", ":"), sort_keys=True)
+        fd, temp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(mapping, handle, separators=(",", ":"), sort_keys=True)
+            os.replace(temp, path)
+        except BaseException:
+            # Leaving a .tmp behind would be a slow leak of files nothing reads.
+            if os.path.exists(temp):
+                os.unlink(temp)
+            raise
 
     def read_index(self, doc_id):
         try:
@@ -240,11 +306,6 @@ def csv_field_cost(text):
     return token_count(buffer.getvalue())
 
 
-def handle_cost():
-    """What a handle costs in the document. Constant: ids are fixed width."""
-    return csv_field_cost(render.HANDLE_PREFIX + format_id(1))
-
-
 def stash_bulk_cells(table, min_saving=MIN_STORE_SAVING):
     """Replace qualifying cells with handles. Returns {id: content text}.
 
@@ -269,7 +330,6 @@ def stash_bulk_cells(table, min_saving=MIN_STORE_SAVING):
     every one of those runs round-tripped perfectly.
     """
     types = [column["type"] for column in table["columns"]]
-    threshold = handle_cost() + min_saving
 
     pending = {}
     for row in table["cells"]:
@@ -277,11 +337,28 @@ def stash_bulk_cells(table, min_saving=MIN_STORE_SAVING):
             if isinstance(value, render.Handle):
                 continue
             text = render.encode_cell(value, type_name)
-            if csv_field_cost(text) < threshold:
-                continue
+
+            # The size travels with the handle so the reader can decide whether
+            # to spend it. token_count of the bare text, not the CSV-quoted
+            # field: it is what the *fetch* will cost the reader, not what the
+            # cell costs the document.
             cell_id = format_id(len(pending) + 1)
+            handle = render.Handle(cell_id, token_count(text))
+
+            # Priced against the handle this cell would ACTUALLY get, lure and
+            # all, rather than against a bare `\@0001`. The two differ by the
+            # width of the token count, so a bare-handle threshold would admit
+            # cells that save less than min_saving once written. Same shape as
+            # Rule 4 — one notion of what a handle costs, not two — and the same
+            # trap docs/thresholds.md records for #dict, where pricing the
+            # status quo with the wrong encoder made every dictionary look
+            # better than it was.
+            gain = csv_field_cost(text) - csv_field_cost(render.encode_cell(handle))
+            if gain < min_saving:
+                continue
+
             pending[cell_id] = text
-            row[position] = render.Handle(cell_id)
+            row[position] = handle
     return pending
 
 

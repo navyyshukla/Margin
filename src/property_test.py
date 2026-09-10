@@ -27,6 +27,7 @@ Usage: python src/property_test.py [trials]
 import json
 import random
 import sys
+import tempfile
 
 import render
 import store
@@ -322,6 +323,69 @@ def dedupes_across_documents():
     return (same_json(decompress(first_text, st), strip_boilerplate(first))
             and same_json(decompress(second_text, st), strip_boilerplate(second))
             and len(st.indexes) == 2)
+
+
+def file_store_survives_real_bytes():
+    """FileStore, against a real directory, with content that broke it.
+
+    Every other store check runs on MemoryStore, because this file runs thousands
+    of trials and a gate that writes thousands of files is a gate someone turns
+    off. The consequence was that **the implementation that actually ships had no
+    coverage at all** — and it was broken: objects were read back in text mode,
+    so Python's universal-newline translation turned `\\r\\n` into `\\n`, the
+    read-back never equalled what was written, and `put` reported a hash
+    collision while `get` reported that the content had changed underneath it.
+    Both messages were confidently wrong about the cause.
+
+    Real prose is full of carriage returns — GitHub issue bodies are CRLF — so
+    this was not an edge case, it was the main path. Rule 12: the environment a
+    check runs in has to be the environment the code runs in, and for exactly one
+    check here that has to be a real filesystem.
+
+    So: a handful of payloads, once, on disk. Cheap enough to always run.
+    """
+    crlf = "A body with Windows line endings.\r\n\r\nSecond paragraph.\r\n" * 12
+    payloads = [
+        [{"i": index, "a": f"{crlf} row {index}"} for index in range(8)],
+        # A lone \r too: text mode translates that as well, and it is the case a
+        # \r\n-only fixture would silently stop covering.
+        [{"i": index, "a": f"line one\rline two {_BULK} {index}"} for index in range(8)],
+        bulky(),
+    ]
+
+    with tempfile.TemporaryDirectory() as root:
+        st = store.FileStore(root)
+        for payload in payloads:
+            text, _ = compress_json(payload, store=st)
+            if not text.startswith(FORMAT_MARKER):
+                return False
+            if render.STORE_PREFIX not in text:
+                return False  # the premise: nothing stored means nothing tested
+            if not same_json(decompress(text, st), strip_boilerplate(payload)):
+                return False
+
+        # Writing the same payload a second time must be a no-op, not a
+        # collision — this is the exact shape the text-mode bug took, and
+        # `put` is the only place that compares stored bytes against new ones.
+        #
+        # The RESULT is asserted, not just the call. The first version ran these
+        # and looked at nothing, so once compress_json learned to degrade
+        # gracefully on a failed store write, a reintroduced text-mode read fell
+        # back to plain JSON and this check sailed past it. Rule 12: the
+        # question is what the check lets through, and a call whose return value
+        # is discarded lets through everything that fails quietly.
+        for payload in payloads:
+            again, notes = compress_json(payload, store=st)
+            if render.STORE_PREFIX not in again:
+                return False
+            if any("store write failed" in note for note in notes):
+                return False
+
+        # And a store re-opened from the same directory still resolves — the
+        # index has to survive being written and read as files, not just held.
+        reopened = store.FileStore(root)
+        text, _ = compress_json(payloads[0], store=reopened)
+        return same_json(decompress(text, reopened), strip_boilerplate(payloads[0]))
 
 
 def detects_a_broken_store():
@@ -837,6 +901,9 @@ def main():
 
     if not dedupes_across_documents():
         failures.append(("STORE (no dedup across documents, or a document broke)", 0, []))
+
+    if not file_store_survives_real_bytes():
+        failures.append(("STORE (FileStore does not survive real bytes on disk)", 0, []))
 
     if not detects_a_broken_store():
         failures.append(("STORE (the completeness detectors do not detect)", 0, []))

@@ -110,13 +110,13 @@ MUTATIONS = [
         "the compression guard is removed",
         "src/cli.py",
         "    try:\n"
-        "        text, notes = compress_json(data, original_text=raw_text)\n"
+        "        text, notes = compress_json(data, original_text=raw_text, store=backing)\n"
         "    except Exception as exc:\n"
         '        note(f"could not compress ({type(exc).__name__}: {exc})'
         ' — passed through unchanged")\n'
         "        sys.stdout.buffer.write(raw_bytes)\n"
         "        return 0",
-        "    text, notes = compress_json(data, original_text=raw_text)",
+        "    text, notes = compress_json(data, original_text=raw_text, store=backing)",
         "dies in compression",
     ),
     Mutation(
@@ -157,10 +157,10 @@ MUTATIONS = [
     Mutation(
         "the store is switched off: nothing is ever stashed",
         "src/store.py",
-            "            if csv_field_cost(text) < threshold:\n"
-            "                continue",
-            "            if True:\n"
-            "                continue",
+        "            if gain < min_saving:\n"
+        "                continue",
+        "            if True:\n"
+        "                continue",
         "MUST_STORE (no #store line)",
         gate="property_test.py",
     ),
@@ -202,6 +202,16 @@ MUTATIONS = [
         "    return sorted(cell_id for cell_id, name in index.items() if not store.has(name))",
         "    return []",
         "completeness detectors do not detect",
+        gate="property_test.py",
+    ),
+    Mutation(
+        "stored objects are read back in text mode (CRLF becomes LF)",
+        "src/store.py",
+        '            with open(path, "rb") as handle:\n'
+        "                if handle.read() != data:",
+        '            with open(path, encoding="utf-8") as handle:\n'
+        "                if handle.read() != text:",
+        "FileStore does not survive real bytes",
         gate="property_test.py",
     ),
     Mutation(
