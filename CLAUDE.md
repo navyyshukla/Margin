@@ -7,7 +7,7 @@ degrading answer quality on a fixed set of test questions. Inspired by Headroom
 ## Read these before acting
 
 - **Changing `src/*.py`, `bin/margin`, a test, a threshold or a hook — or merging to `main`?**
-  Load the **`harness` skill** first. It holds the checklist, the merge gate, and the thirteen
+  Load the **`harness` skill** first. It holds the checklist, the merge gate, and the sixteen
   rules; `docs/harness.md` holds the failure that bought each one.
 - **`docs/README.md`** is the index — which doc answers which question.
 - **`docs/status.md`** is what is done and what is next. Status is deliberately not kept in this
@@ -66,6 +66,10 @@ degrading answer quality on a fixed set of test questions. Inspired by Headroom
 Seven gates: `src/property_test.py`, `src/cli_test.py`, `src/mcp_test.py`, `src/mutation_test.py`,
 `src/eval_harness.py`, the `.claude/hooks/run_eval.sh` PostToolUse hook, and `.githooks/pre-commit`. What each asks, and
 what you owe before changing the format, is in the `harness` skill.
+
+They do not all run at the same cadence: an edit to `src/*.py` runs four of them (~17s),
+and a commit runs all five (~62s). `mutation_test.py` is the commit-only one — the skill's
+table says why.
 
 The one thing you cannot discover from the repo: **run `./.githooks/install.sh` once per clone, and
 again after editing any hook** — hooks are copied into `.git/hooks`, not symlinked, so an edit does

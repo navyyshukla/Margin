@@ -19,6 +19,21 @@ Two kinds of check:
 Questions 11-12 need real reading comprehension and stay manual; string-matching
 them would give false confidence.
 
+**What the PRESERVE checks can and cannot see.** run() asserts
+same_json(compressed, stripped) before any of them — full structural equality —
+so a PRESERVE check cannot fail unless that assertion already did. It is not
+dead weight, but its subject is narrower than it looks: `expected` is computed on
+the RAW payload and `actual` on the round-tripped one, so what these actually
+prove is that strip_boilerplate did not delete a field some question needs. They
+say nothing about the table format, the store, or #dict — the round-trip check
+covers that ground, and covers it completely.
+
+Which leaves the claim nothing here tests: that a *model* reading the compressed
+document answers as well as one reading the raw payload. Every check in this file
+runs against decompressed Python objects, so no gate has ever seen the document
+as a reader sees it. docs/status.md PR #7 is that measurement. Until it exists,
+"answers do not move" means "the fields are still there", and the README says so.
+
 Usage: python src/eval_harness.py data/samples/github_issues.json
 """
 

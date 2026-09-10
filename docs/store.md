@@ -12,10 +12,15 @@ deliberately reverses CLAUDE.md's "no proxy server, no hosted API, not yet".
 | | now | with the store |
 |---|---:|---:|
 | `github_issues.json` | 55.3% | **93.4%** |
-| `hn_stories.json` | 43.0% | ~89% |
-| `jsonplaceholder_posts.json` | 26.2% | ~75% |
+| `hn_stories.json` | 43.0% | **88.1%** |
+| `jsonplaceholder_posts.json` | 26.2% | **71.5%** |
 | the other five payloads | | **unchanged, byte for byte** |
 | whole sample set | 41.6% | **73.7%** |
+
+Every figure `margin --store` output, re-measured 2026-09-11. The middle two rows
+read `~89%` and `~75%` until then — approximations carried over from the
+projection, and the second was a point and a half optimistic. An `~` is not a
+measurement; `docs/shapes.md` records what the rounding hid.
 
 Three payloads of eight, and nothing at all for five. That order matters: the set
 total is driven entirely by the three, and `docs/shapes.md` records what

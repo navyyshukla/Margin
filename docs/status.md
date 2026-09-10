@@ -68,9 +68,12 @@ wrong version was about to become the reason not to build this.
 server + CLI wiring → cold read #4 and a model-in-the-loop eval.
 
 - [x] **Measured** (2026-09-10). `src/measure_store.py` prices every cell against
-      a handle and renders the resulting document. 41.6% → 74.4% across the set,
-      concentrated in three payloads. Numbers in `docs/shapes.md`, thresholds and
-      the handle-encoding comparison in `docs/thresholds.md`.
+      a handle and renders the resulting document. Projected 73.5% for the
+      encoding that shipped; the shipped CLI measures **73.7%** across the set
+      (re-measured 2026-09-11), concentrated in three payloads. This line said
+      74.4% until then — the projection's *bare-handle* row, not its
+      `\@0001[276t]` one. Numbers in `docs/shapes.md`, thresholds and the
+      handle-encoding comparison in `docs/thresholds.md`.
 - [x] **PR #5 — the format and the store.** `\@0001` handles, a per-document id
       with the `id -> hash` index on disk, `src/store.py`. The CLI is untouched:
       `store=None` is the default, so every existing gate still exercises the

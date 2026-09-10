@@ -5,21 +5,29 @@ description: Margin's test-harness rulebook and the development→main merge gat
 
 # The harness
 
-Seven gates and fifteen rules. This file is the **procedure** — what to do. The
+Seven gates and sixteen rules. This file is the **procedure** — what to do. The
 **record** — the failure that bought each rule — is `docs/harness.md`, and it is
-cited by number from 27 places outside itself, 20 of them comments in `src/*.py`
-(measured 2026-09-10). Read the rule there before changing anything it governs. Never restate a rule here in a form
-that could drift from it.
+cited by number from **76 places across 20 files** outside itself, 46 of them in
+`src/*.py` (re-measured 2026-09-11; this line said 27 and 20, which was wrong in
+both halves). Read the rule there before changing anything it governs. Never
+restate a rule here in a form that could drift from it.
 
-| Gate | Asks | Needs a sample payload? |
-|---|---|---|
-| `src/property_test.py` | Does the format survive shapes nobody wrote down? | no — generates its own |
-| `src/cli_test.py` | Does the tool keep the promises the tool makes? | no — generates its own |
-| `src/mcp_test.py` | Does the fetch tool resolve what the document promises? | no — builds its own |
-| `src/mutation_test.py` | Can the other gates still fail? | no — mutates the source |
-| `src/eval_harness.py` | Do the answers survive on the payloads I have? | yes |
-| `.claude/hooks/run_eval.sh` | Did Claude's last edit break any of them? | no |
-| `.githooks/pre-commit` | Is this commit allowed to exist? | no |
+| Gate | Asks | Sample payload? | Runs |
+|---|---|---|---|
+| `src/property_test.py` | Does the format survive shapes nobody wrote down? | no — generates its own | edit + commit |
+| `src/cli_test.py` | Does the tool keep the promises the tool makes? | no — generates its own | edit + commit |
+| `src/mcp_test.py` | Does the fetch tool resolve what the document promises? | no — builds its own | edit + commit |
+| `src/eval_harness.py` | Do the answers survive on the payloads I have? | yes | edit + commit |
+| `src/mutation_test.py` | Can the other gates still fail? | no — mutates the source | **commit only** |
+| `.claude/hooks/run_eval.sh` | Did Claude's last edit break any of them? | no | every `src/*.py` edit |
+| `.githooks/pre-commit` | Is this commit allowed to exist? | no | every commit |
+
+**The edit chain measures 17.0s; the commit chain about 62s** (2026-09-11 —
+mutation ~45, property ~11, cli 3.6, mcp 1.4, eval over all eight payloads 1.1;
+±10% run to run, so the ratio is the point, not the decimal). `mutation_test.py`
+is roughly three quarters of the total and asks a question about *the gates*, not
+about the edit in front of you, so since 2026-09-11 it runs at the commit boundary
+only. That is a cadence change, not a skip — no commit reaches `main` without it.
 
 Run them by hand with `source .venv/bin/activate` then
 `python src/{property_test,cli_test,mcp_test,mutation_test}.py`; `eval_harness.py`
@@ -103,7 +111,7 @@ reason it is a copy rather than `core.hooksPath` is in a comment at the top of
 
 ---
 
-## The fifteen rules, one line each
+## The sixteen rules, one line each
 
 Full text and the failure behind each: `docs/harness.md`.
 
@@ -133,3 +141,6 @@ Full text and the failure behind each: `docs/harness.md`.
     positive to is not a detector.
 15. Test the implementation that ships, not the one that is convenient. Every
     store check ran on `MemoryStore`; `FileStore` shipped broken.
+16. A check downstream of an equality assertion tests only what the assertion
+    could not see. Before citing a check count as evidence, name what would have
+    to break for those checks to fail.

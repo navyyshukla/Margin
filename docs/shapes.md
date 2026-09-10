@@ -27,6 +27,69 @@ read #3, which miscounted a hand-counted total and could not verify an index 61
 deep into an unmarked array. `docs/cold-reads/2026-09-09.md` has the reasoning;
 `HEADER_REPEAT_EVERY` made the same trade at the same price.
 
+## Where the savings come from, and which of them are lossy
+
+The 41.6% above is three stages, and only the first is irreversible. Measured
+2026-09-11, every column a real `token_count` of real output:
+
+| Payload | raw | compact | stripped | table |
+|---|---:|---:|---:|---:|
+| `github_issues.json` | 50,031 | 43,430 | 28,884 | 22,372 |
+| `hn_stories.json` | 35,585 | 35,585 | 35,585 | 20,284 |
+| `jsonplaceholder_posts.json` | 8,761 | 7,162 | 7,162 | 6,462 |
+| the other five | | | *unchanged by the strip* | |
+| **total** | **121,569** | **115,549** | **101,003** | **71,022** |
+
+- **compact** — re-serialised with `(",", ":")`. Pure formatting; nothing is lost.
+- **stripped** — `strip_boilerplate` drops keys. **This is the lossy stage**, and
+  see the section below.
+- **table** — the format this document describes. Exactly reversible.
+
+Set-wide the split is **6,020 tokens formatting (12%), 14,546 key-dropping (29%),
+29,981 the table (59%)** of the 50,547 saved. On `github_issues` alone, where the
+strip stage does all of its work, it is 6,601 / 14,546 / 6,512 — the field
+deleter is the single largest contributor *on that payload*, and the honest way to
+say it is that the table format still earns 59% across the set.
+
+**The strip stage is a no-op on seven of eight payloads.** `compact` and
+`stripped` are identical for every payload but `github_issues` — including
+`jsonplaceholder_posts`, whose whole raw→compact gap is whitespace. All 14,546
+key-dropped tokens in the set total are GitHub's. That is not luck: the rule keys
+off a `*_url` naming convention (`src/compress.py`), and GitHub is the only API in
+the sample set that uses it.
+
+Two caveats on the **compact** column, because an aggregate hides them.
+`graphql_countries` reserialises to 15,187 from a 13,011-token file, and
+`openmeteo_forecast` to 3,642 from 3,638 — both *larger*, because a file as
+fetched can tokenize better than any canonical re-encoding of it. Neither ships:
+`compress_json` compares against the original text and hands back the input
+unchanged when it cannot beat it, which is why both read 0.0% in the table at the
+top. The 12% formatting share is a real set-wide figure and not a per-payload one.
+
+## What is thrown away, and what you can no longer ask
+
+`strip_boilerplate` drops, and **nothing restores**:
+
+| Dropped | Why |
+|---|---|
+| any key ending `_url` | link templates — `html_url`, `comments_url`, `avatar_url` |
+| `node_id`, `gravatar_id` | opaque IDs no question about the content needs |
+| a bare `url` key, **only** when the same object also has `*_url` siblings | that pattern marks it as one more template; alone, `url` is usually the record's subject |
+
+On `github_issues.json` that is 84 `html_url`, 30 `avatar_url`, 97 `node_id`, 30
+`gravatar_id` and 151 `url` occurrences, all reaching zero in the output.
+
+The consequence is concrete and worth stating rather than discovering: **a
+compressed payload cannot answer "give me the link to issue 37508".** The number,
+title, author, labels and state are all there; the URL is gone, and no `fetch`
+brings it back — unlike a stored cell, which is held rather than dropped
+(`docs/store.md`). If you need the links, don't compress that payload.
+
+This is the one place Margin's "reversible always" is not true, and it is true of
+one stage rather than of the tool. Everything downstream of the strip round-trips
+exactly, verified at runtime, and that boundary is what `same_json(compressed,
+stripped)` in `src/eval_harness.py` is measured against.
+
 **Nothing comes out larger than it went in.** That is enforced, not hoped for:
 `compress_json` takes the original text and refuses to return anything longer.
 Three payloads used to violate it — Open-Meteo by 19%, exchange rates by 25%,
@@ -187,19 +250,33 @@ four of eight payloads, is content no rule here will ever compress.
 
 ---
 
-## The store, measured and built (2026-09-10)
+## The store, measured and built (re-measured 2026-09-11)
 
 A cell costing more than `MIN_STORE_SAVING` tokens is replaced by a `\@0001`
-handle and its content moves to a store on disk. Built in PR #5; the CLI does not
-use it yet.
+handle and its content moves to a store on disk. Built in PR #5 and wired into
+the CLI in PR #6 — `margin --store`, off by default (`docs/store.md`).
+
+Every figure below is `margin --store` output, not a projection:
 
 | Payload | out now | with store | stored |
 |---|---:|---:|---:|
-| `github_issues.json` | 22,372 | **3,147 — 93.7%** | 33 cells |
-| `hn_stories.json` | 20,284 | **3,887 — 89.1%** | 52 cells |
-| `jsonplaceholder_posts.json` | 6,462 | **2,166 — 75.3%** | 100 cells |
+| `github_issues.json` | 22,372 | **3,298 — 93.4%** | 32 cells |
+| `hn_stories.json` | 20,284 | **4,240 — 88.1%** | 44 cells |
+| `jsonplaceholder_posts.json` | 6,462 | **2,497 — 71.5%** | 100 cells |
 | the other five | | unchanged, byte for byte | 0 |
-| **total** | **71,022** | **31,104 — 41.6% → 74.4%** | |
+| **total** | **71,022** | **31,939 — 41.6% → 73.7%** | |
+
+**This table read 31,104 / 74.4% until 2026-09-11, and it was the projection
+wearing the projection's own wrong row.** `src/measure_store.py` prices several
+handle encodings; the row quoted here was `@0001` **bare**, without the `[Nt]`
+size the shipped handle carries. Its `tokens only` row — the encoding that
+actually shipped — reads 73.5%, against a real 73.7%. So the model agreed with
+the implementation to two tenths of a point the entire time, and what drifted was
+which of its rows the docs pointed at. `docs/thresholds.md` now labels them.
+
+Rule 5 says re-measure rather than remember. The narrower lesson here: a
+projection with more than one row needs the row named, or "re-measured" and
+"re-read the wrong line again" look identical.
 
 **Three of eight payloads, and nothing at all for five.** Worth saying in that
 order: the set total is driven entirely by the three, and overstating this is the
@@ -207,10 +284,10 @@ mistake recorded above. The five it does not help lose nothing — a document wi
 no qualifying cell carries no `#store` line and is byte-identical to what the
 same payload produced before the store existed.
 
-The 33 cells on GitHub are 30 issue bodies plus three long strings; the 52 on HN
-are mostly `children`. That is the bulk census above, arrived at from a different
-direction and without classifying anything as "bulk" — every cell was priced
-against a handle and these are the ones that won.
+The 32 cells on GitHub are 30 issue bodies plus 2 long titles; the 44 on HN are
+30 `children` arrays plus 14 URLs and story texts. That is the bulk census above,
+arrived at from a different direction and without classifying anything as "bulk"
+— every cell was priced against a handle and these are the ones that won.
 
 ### What the existing rules take first
 

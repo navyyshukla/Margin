@@ -62,13 +62,26 @@ Measured across eight APIs (tokens under `cl100k_base`, against the file as fetc
 `docs/shapes.md` explains what each shape is and why the last two are correct
 outcomes rather than gaps.
 
+Those figures are three stages, and the first one throws data away. Set-wide:
+formatting 12%, dropping link-template keys 29%, the table format 59%. The
+dropping stage fires on exactly one of the eight payloads — GitHub, the only API
+here using the `*_url` convention — where it is the largest single contributor.
+`docs/shapes.md` has the per-stage table and the list of what is gone for good.
+
 ## The rules it holds itself to
 
-- **Reversible.** `decompress(compress(x))` is verified at runtime, and a
-  transform that cannot be undone is not shipped.
+- **Reversible after one deliberate cut.** The first stage *drops* link-template
+  and opaque-ID keys — `*_url`, `node_id`, `gravatar_id` — and nothing restores
+  them, so a compressed GitHub payload cannot answer "link me to issue 37508".
+  Everything after that stage is exactly reversible, `decompress(compress(x))` is
+  verified at runtime, and a transform that cannot be undone is not shipped past
+  that line. What goes and what it costs: `docs/shapes.md`.
 - **Never worse.** If nothing helps, the input comes back unchanged.
-- **Answers must not move.** 76 questions across the eight payloads are asked
-  before and after compression; any drift fails the build.
+- **Answers must not move — as far as this can currently see.** 76 checks assert
+  that the dropping stage kept every field a question needs. They cannot see the
+  table format: the round-trip check above them has already proved it exact, so
+  they can only fail if it failed first. Whether a *model* answers the same
+  through a compressed document is not tested yet — `docs/status.md` PR #7.
 - **Readable by a model, not just by a parser.** The document explains its own
   encodings, and that claim is checked by giving it to a model with no access to
   this repo — four times so far, scored in `docs/cold-reads.md`.

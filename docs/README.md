@@ -6,8 +6,10 @@ keeping their own copy of this mapping.
 | Question | File |
 |---|---|
 | What do I have to do before changing the format, a threshold or a hook? | the **`harness` skill** (`.claude/skills/harness/SKILL.md`) — the procedure |
-| Why does that rule exist? What failure bought it? | [`harness.md`](harness.md) — the record, 15 rules, cited by number from 27 places outside itself |
+| Why does that rule exist? What failure bought it? | [`harness.md`](harness.md) — the record, 16 rules, cited by number from 76 places across 20 files outside itself |
 | Which API shapes are handled, and why are two of them 0%? | [`shapes.md`](shapes.md) |
+| What does Margin throw away, and what can I no longer ask? | [`shapes.md`](shapes.md) — *What is thrown away* |
+| Which stage earns which share of the savings? | [`shapes.md`](shapes.md) — *Where the savings come from* |
 | Where did this number come from? | [`thresholds.md`](thresholds.md) |
 | What does `margin` exit, and what does the pipe guarantee? | [`cli.md`](cli.md) |
 | How does the store work, and how does a model reach it? | [`store.md`](store.md) |

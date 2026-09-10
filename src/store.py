@@ -2,9 +2,13 @@
 
 A cell whose text costs more than MIN_STORE_SAVING tokens is replaced in the
 document by a handle, and its content moves here. The model fetches only what a
-question actually needs. Measured worth on the sample set, before any of this
-was written: 41.6% -> 74.6% overall, and 93% on github_issues — see
-src/measure_store.py, which renders the documents rather than modelling them.
+question actually needs.
+
+Worth on the sample set, measured through the shipped CLI (2026-09-11):
+**41.6% -> 73.7%** overall, and 93.4% on github_issues. This file said 74.6%
+until then, which was src/measure_store.py's *bare-handle* row — a handle priced
+without the `[Nt]` size the shipped one carries. The projection was never wrong;
+the row quoted from it was. docs/thresholds.md records which row is which.
 
 ## Why two levels, and not one
 
@@ -71,7 +75,8 @@ MIN_STORE_SAVING = 20
 # is what the id/index indirection bought — so its width costs nothing. The
 # document id *is* in the document, on the #store line, and widening it from 12
 # to 24 measured at **1 token per document**; 21 tokens across the whole sample
-# set, which leaves the set total at 74.4%. Nothing to economise against.
+# set, which leaves the set total at 73.7% either way — the widening does not
+# move the figure to a tenth of a point. Nothing to economise against.
 #
 # A doc_id collision is worse than an object collision, which is the other
 # reason both are wide: two payloads sharing a doc_id means one document's
