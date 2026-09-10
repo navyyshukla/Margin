@@ -121,7 +121,7 @@ first thing here capable of losing half a document while looking fine
 
 ## What a cold reader made of it
 
-`docs/cold-read-2026-09-10.md`, 12/12. Given a handle-bearing document and **no
+`docs/cold-reads/2026-09-10.md`, 12/12. Given a handle-bearing document and **no
 way to fetch**, the reader said "not answerable — the body is elided" rather than
 inferring from neighbouring columns, which was the failure that would have made
 this stage worse than useless. It answered which absent body was longest and what

@@ -24,7 +24,7 @@ Four payloads lost a little to legibility on the same day, and deliberately: the
 `#dict` line is keyed by index rather than being a bare list, and the legend now
 explains the repeating header. Together **+251 tokens, 0.3%** — bought by cold
 read #3, which miscounted a hand-counted total and could not verify an index 61
-deep into an unmarked array. `docs/cold-read-2026-09-09.md` has the reasoning;
+deep into an unmarked array. `docs/cold-reads/2026-09-09.md` has the reasoning;
 `HEADER_REPEAT_EVERY` made the same trade at the same price.
 
 **Nothing comes out larger than it went in.** That is enforced, not hoped for:

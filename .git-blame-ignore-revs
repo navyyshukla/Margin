@@ -1,0 +1,9 @@
+# Commits that only moved files. `git blame` steps over these so the line
+# history points at whoever actually wrote the line, not at the move.
+#
+# Enable once per clone:
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# Move the dated cold reads into docs/cold-reads/, and rename
+# data/eval_questions.md to name the one payload it actually covers.
+d71fdd61e6edccc993082d2a92161b0bd2a15ee6

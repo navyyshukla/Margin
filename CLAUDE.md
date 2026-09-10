@@ -51,15 +51,20 @@ degrading answer quality on a fixed set of test questions. Inspired by Headroom
 ## Layout
 
 - `bin/margin` — the entry point; symlink it into `~/.local/bin` once (see `docs/cli.md`)
-- `src/` — the actual code, one file per concern as it's written
+- `src/` — flat, one file per concern. Nine files are the product (the pipeline, `cli.py`,
+  `mcp_server.py`); the other fifteen are the harness that guards it — the gates, the eval
+  harness and its per-payload `checks_*.py`, and two measurement scripts. Deliberately not
+  split into `src/` + `tests/`: every benefit of that split is a *packaging* benefit and
+  nothing here is packaged, while the move would rewrite ten harness files — and a mutation
+  tester that stops finding its targets fails green
 - `docs/` — see `docs/README.md`
 - `data/samples/` — real JSON payloads used for testing (gitignored by default — see `.gitignore`)
 - `requirements.txt` — kept minimal; add a dependency only when a line of code actually needs it
 
 ## Harness
 
-Six gates: `src/property_test.py`, `src/cli_test.py`, `src/mutation_test.py`, `src/eval_harness.py`,
-the `.claude/hooks/run_eval.sh` PostToolUse hook, and `.githooks/pre-commit`. What each asks, and
+Seven gates: `src/property_test.py`, `src/cli_test.py`, `src/mcp_test.py`, `src/mutation_test.py`,
+`src/eval_harness.py`, the `.claude/hooks/run_eval.sh` PostToolUse hook, and `.githooks/pre-commit`. What each asks, and
 what you owe before changing the format, is in the `harness` skill.
 
 The one thing you cannot discover from the repo: **run `./.githooks/install.sh` once per clone, and

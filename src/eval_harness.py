@@ -1,7 +1,7 @@
-"""Automated eval harness — makes data/eval_questions.md checkable by a script
+"""Automated eval harness — makes data/eval_questions_github_issues.md checkable by a script
 instead of by hand.
 
-Why this exists: the ground-truth answers in data/eval_questions.md were verified
+Why this exists: the ground-truth answers in data/eval_questions_github_issues.md were verified
 by running one-off snippets in the terminal. That doesn't scale — once several
 compression rules stack up, re-checking every question by hand is exactly how a
 bad rule slips through unnoticed.

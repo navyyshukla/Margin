@@ -5,7 +5,7 @@ the data they interrogate, and mixing two payloads' questions in one file
 makes it unclear which failure belongs to which.
 
 Ground truth is computed from the raw payload at run time rather than
-hardcoded, so a re-fetched sample keeps working. See data/eval_questions.md
+hardcoded, so a re-fetched sample keeps working. See data/eval_questions_github_issues.md
 for the questions in prose, and src/eval_harness.py for how these are run.
 """
 

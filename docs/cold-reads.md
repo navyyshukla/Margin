@@ -27,7 +27,9 @@ rendered `.txt` document(s) and told:
 - answer **"not answerable from this document"** rather than guess
 - say bluntly what was ambiguous, and give a confidence score out of 10
 
-The questions are the payload's set from `data/eval_questions.md`, plus whatever
+The questions are the payload's set — written out in prose for `github_issues` in
+`data/eval_questions_github_issues.md`, and existing only as `src/checks_<payload>.py`
+for the other seven — plus whatever
 traps the new element deserves — an encoding that reads plausibly as something
 else is the case worth constructing. Read #1's trap was decoding a `dints` array;
 read #3's was resolving a `#dict` index.
@@ -40,10 +42,10 @@ the table below.** The table is the single source of truth for the score —
 
 | Read | Answers | Confidence | What it found |
 |---|---|---|---|
-| [2026-09-08](cold-read-2026-09-08.md) | 13/13 | 6/10 | drifted across a run of empty cells |
-| [2026-09-08b](cold-read-2026-09-08b.md) | 16/16 | 7/10 | miscounted 13 positional columns; `json` used for a plainly numeric column; `#keyed"_key"` had no delimiter; the dotted-path convention was never stated |
-| [2026-09-09](cold-read-2026-09-09.md) | **11/12** | 8/10 | could not verify an index 61 deep into an unmarked `#dict` array, and **miscounted 58 as 57**; the repeating header was never explained |
-| [2026-09-10](cold-read-2026-09-10.md) | 12/12 | 8/10 | a `#dict` cell reads as a value, not a reference (`1` label vs key `1`) — the store's own handles were unambiguous |
+| [2026-09-08](cold-reads/2026-09-08.md) | 13/13 | 6/10 | drifted across a run of empty cells |
+| [2026-09-08b](cold-reads/2026-09-08b.md) | 16/16 | 7/10 | miscounted 13 positional columns; `json` used for a plainly numeric column; `#keyed"_key"` had no delimiter; the dotted-path convention was never stated |
+| [2026-09-09](cold-reads/2026-09-09.md) | **11/12** | 8/10 | could not verify an index 61 deep into an unmarked `#dict` array, and **miscounted 58 as 57**; the repeating header was never explained |
+| [2026-09-10](cold-reads/2026-09-10.md) | 12/12 | 8/10 | a `#dict` cell reads as a value, not a reference (`1` label vs key `1`) — the store's own handles were unambiguous |
 
 ## What four reads have established
 

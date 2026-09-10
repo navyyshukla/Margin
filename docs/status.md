@@ -85,7 +85,7 @@ server + CLI wiring → cold read #4 and a model-in-the-loop eval.
 - [x] **Cold read #4** (2026-09-10). 12/12. Given a handle-bearing document and
       no way to fetch, the reader said "not answerable" rather than inferring —
       the failure that would have made this stage worse than useless. The `[Nt]`
-      lure paid for itself in the same read. `docs/cold-read-2026-09-10.md`.
+      lure paid for itself in the same read. `docs/cold-reads/2026-09-10.md`.
 - [ ] **PR #7 — the model-in-the-loop eval, and it is the important one.**
       Everything measured so far is about *documents*. Nothing yet shows a model
       answers as well through a handle and a fetch as it does reading the value

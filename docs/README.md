@@ -12,7 +12,7 @@ keeping their own copy of this mapping.
 | What does `margin` exit, and what does the pipe guarantee? | [`cli.md`](cli.md) |
 | How does the store work, and how does a model reach it? | [`store.md`](store.md) |
 | How do I run a cold read, and what have they found? | [`cold-reads.md`](cold-reads.md) |
-| What did one particular cold read find? | `cold-read-YYYY-MM-DD.md` — [#1](cold-read-2026-09-08.md), [#2](cold-read-2026-09-08b.md), [#3](cold-read-2026-09-09.md), [#4](cold-read-2026-09-10.md) |
+| What did one particular cold read find? | `cold-reads/YYYY-MM-DD.md` — [#1](cold-reads/2026-09-08.md), [#2](cold-reads/2026-09-08b.md), [#3](cold-reads/2026-09-09.md), [#4](cold-reads/2026-09-10.md) |
 | What is done, and what is next? | [`status.md`](status.md) |
 
 ## The split, and why

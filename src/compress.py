@@ -7,7 +7,7 @@ because that pattern marks it as one more link template; on its own, "url" is
 usually the record's actual subject (see _has_url_template_siblings).
 
 Measured 38% token reduction on data/samples/github_issues.json with zero
-answer-quality loss on data/eval_questions.md (2026-09-07).
+answer-quality loss on data/eval_questions_github_issues.md (2026-09-07).
 
 This stage is deliberately LOSSY: the dropped fields are the product, not an
 accident, and nothing restores them. Every later stage is exactly reversible.

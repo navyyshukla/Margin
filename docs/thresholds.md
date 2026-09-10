@@ -117,7 +117,7 @@ at index 61, the reader had to hand-count 61 entries into an 11KB single-line
 array, said there was "no way to verify an index", and on the next question
 miscounted 58 as 57. Counting has been the weak point of all three cold reads.
 `HEADER_REPEAT_EVERY` made the identical trade at +0.3% — see
-`docs/cold-read-2026-09-09.md`.
+`docs/cold-reads/2026-09-09.md`.
 
 **One trap worth recording.** The first version of the cost model priced the
 current cells with `json.dumps`, and a `str` cell is written **bare** in the

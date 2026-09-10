@@ -84,6 +84,7 @@ outcomes rather than gaps.
 | `src/compress.py` | the pipeline and its thresholds |
 | `src/table.py` | decides the table's shape; renders no text |
 | `src/tokens.py` | counting tokens, in one place |
+| `src/detect.py` | decides whether the input is JSON at all |
 | `src/render.py` | writes the document and reads it back, in one file so the two cannot drift |
 | `src/store.py` | the content store: bulk cells live here, not in the prompt |
 | `src/mcp_server.py` | the `fetch` tool — what makes Margin a tool the model calls |
@@ -93,6 +94,8 @@ outcomes rather than gaps.
 | `src/cli_test.py` | runs the CLI as a subprocess and checks what it promises |
 | `src/mcp_test.py` | drives the MCP server as a subprocess over JSON-RPC |
 | `src/mutation_test.py` | breaks the CLI on purpose and checks that cli_test.py notices |
+| `src/checks_<payload>.py` | the expected answers for one sample, paired to it by name (eight of them) |
+| `src/measure_*.py` | one-off measurement scripts — not gates, nothing runs them but you |
 | `docs/` | the written record — `docs/README.md` is the index of which file answers what |
 
 Run `./.githooks/install.sh` once per clone. `data/samples/` is gitignored — it
