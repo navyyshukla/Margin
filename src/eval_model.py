@@ -47,12 +47,15 @@ Usage:
 """
 
 import argparse
+import collections
 import datetime
 import importlib
 import json
 import os
+import re
 import sys
 import tempfile
+import time
 
 import mcp_server
 import render
@@ -119,6 +122,19 @@ RAW_MIN_GRADED_FRACTION = 0.8
 # (mutation_test.py has a named mutation for it), so hitting this ceiling means
 # that protection failed and the run should say so.
 MAX_TOOL_TURNS = 6
+
+# Requests per minute to stay under, and how many times to obey a 429 before
+# giving up on a question.
+#
+# Measured against this account 2026-09-11: the free tier refuses the 21st
+# request in a rolling minute on gemini-3.8-flash, naming the metric
+# `generate_content_free_tier_requests, limit: 20` and asking for a retry ~53s
+# later. 16 rather than 20 because the server's window and ours start at
+# different instants, and being refused costs a round trip — the margin is
+# cheaper than the retry. Override with --rpm on a paid key, where this is the
+# single thing standing between a 4-minute sweep and a 20-minute one.
+DEFAULT_RPM = 16
+MAX_RATE_LIMIT_RETRIES = 5
 
 # Checks with no ASK entry, and why. Printed every run: a question that is not
 # asked has to be visible, or coverage quietly rots (Rule 2).
@@ -222,27 +238,51 @@ FETCH_TOOL = {
     },
 }
 
-# The answer comes back as a JSON *string* to be parsed, rather than as a
-# free-form typed field. The 72 graded answers are numbers, strings, booleans,
-# arrays and objects, and one schema cannot say "any of those" in a way every
-# schema dialect agrees on. A string always validates; json.loads then does the
-# typing, and a parse failure is recorded as a wrong answer with the raw text
-# kept, rather than crashing the sweep.
-GRADED_FORMAT = {
-    "type": "text",
-    "mime_type": "application/json",
-    "schema": {
-        "type": "object",
-        "properties": {
-            "answer_json": {
-                "type": "string",
-                "description": "your answer encoded as a JSON value: a number, a "
-                               "quoted string, true/false, an array, or an object",
-            }
+def schema_for(expected):
+    """The schema for one answer, typed from the ground truth we already hold.
+
+    The first design asked for the answer as a JSON *string* — one schema for
+    every question — and it failed on the very first real call. Told to encode
+    "[DevTools Bug] Cannot remove node..." as a JSON string, the model put the
+    plain text in the field instead of a quoted, escaped JSON value, so
+    json.loads saw `[DevTools` and read it as a broken array. Every question
+    would have come back unparseable. Asking a model to double-encode is a
+    request to do something it has no reason to expect.
+
+    Since the expected value is in hand before the question is asked, its type
+    can be declared instead, and no encoding step exists to get wrong.
+
+    bool is checked before int on purpose: in Python `isinstance(True, int)` is
+    True, so the obvious order types every boolean answer as a number. Same trap
+    as `True == 1`, which is why this repo compares with same_json (Rule 9).
+
+    Objects need additionalProperties. Measured against the live API: a bare
+    {"type": "object"} returns `{}` every time, because a schema with no declared
+    properties says the object has none.
+    """
+    if isinstance(expected, bool):
+        return {"type": "boolean"}
+    if isinstance(expected, (int, float)):
+        return {"type": "number"}
+    if isinstance(expected, str):
+        return {"type": "string"}
+    if isinstance(expected, list):
+        return {"type": "array", "items": {}}
+    if isinstance(expected, dict):
+        return {"type": "object", "additionalProperties": True}
+    return {"type": "string"}
+
+
+def graded_format(expected):
+    return {
+        "type": "text",
+        "mime_type": "application/json",
+        "schema": {
+            "type": "object",
+            "properties": {"answer": schema_for(expected)},
+            "required": ["answer"],
         },
-        "required": ["answer_json"],
-    },
-}
+    }
 
 JUDGE_FORMAT = {
     "type": "text",
@@ -258,7 +298,69 @@ JUDGE_FORMAT = {
 }
 
 
-def ask(client, document_text, question, graded, tools=None):
+class Pacer:
+    """Keeps the sweep under the account's requests-per-minute ceiling.
+
+    Measured against the live API 2026-09-11: the free tier allows 20 requests a
+    minute on gemini-3.8-flash, as a rolling window — the 429 body names the
+    metric and asks for a retry about 53 seconds later, not the next day. A
+    sweep is a few hundred requests, so without pacing it spends most of its life
+    being refused, and every refusal costs a round trip and a retry.
+
+    Two halves, and both are needed. Pacing ahead of time keeps us under the
+    ceiling; obeying the server's own retryDelay handles the case where its
+    accounting and ours disagree, which they will — failed requests appear to
+    count, so a client that retries eagerly holds its own window shut.
+    """
+
+    def __init__(self, per_minute):
+        self.per_minute = per_minute
+        self.sent = collections.deque()
+
+    def wait(self):
+        if not self.per_minute:
+            return
+        now = time.monotonic()
+        while self.sent and now - self.sent[0] > 60:
+            self.sent.popleft()
+        if len(self.sent) >= self.per_minute:
+            nap = 60 - (now - self.sent[0]) + 0.5
+            if nap > 0:
+                print(f"    (pacing: {nap:.0f}s to stay under "
+                      f"{self.per_minute}/min)", flush=True)
+                time.sleep(nap)
+        self.sent.append(time.monotonic())
+
+
+RETRY_DELAY = re.compile(r"retry in ([0-9.]+)s", re.I)
+
+
+def call(client, pacer, **kwargs):
+    """One API call, paced, and retried when the server says to wait.
+
+    A 429 is not a failure here — it is the server telling us our own pacing was
+    optimistic — so it is obeyed rather than reported. Anything else is raised to
+    the caller, which records it against the question and carries on: one
+    question that could not be answered must not cost the other 250.
+    """
+    for attempt in range(MAX_RATE_LIMIT_RETRIES):
+        pacer.wait()
+        try:
+            return client.interactions.create(**kwargs)
+        except Exception as exc:                   # noqa: BLE001
+            text = str(exc)
+            if "429" not in text and "too_many_requests" not in text:
+                raise
+            found = RETRY_DELAY.search(text)
+            nap = min(float(found.group(1)) + 1 if found else 30, 90)
+            print(f"    (rate limited; waiting {nap:.0f}s, "
+                  f"attempt {attempt + 1}/{MAX_RATE_LIMIT_RETRIES})", flush=True)
+            time.sleep(nap)
+    raise RuntimeError(
+        f"still rate limited after {MAX_RATE_LIMIT_RETRIES} attempts")
+
+
+def ask(client, pacer, document_text, question, expected=None, tools=None):
     """One question against one document. Returns a record, never raises.
 
     The document goes FIRST and the question LAST, every time. That ordering is
@@ -269,15 +371,16 @@ def ask(client, document_text, question, graded, tools=None):
     """
     prompt = PREAMBLE + document_text + "\n\nQUESTION: " + question
 
+    graded = expected is not None
     kwargs = {"model": ANSWER_MODEL, "input": prompt}
     if graded:
-        kwargs["response_format"] = GRADED_FORMAT
+        kwargs["response_format"] = graded_format(expected)
     if tools:
         kwargs["tools"] = tools
 
     record = {"question": question, "fetch_calls": [], "turns": 0}
     try:
-        interaction = client.interactions.create(**kwargs)
+        interaction = call(client, pacer, **kwargs)
     except Exception as exc:                       # noqa: BLE001 - reported, not raised
         record["error"] = f"{type(exc).__name__}: {exc}"
         return record
@@ -294,8 +397,8 @@ def ask(client, document_text, question, graded, tools=None):
         record["turns"] += 1
 
         results = []
-        for call in calls:
-            args = call.arguments
+        for step in calls:                         # not `call` — that is the
+            args = step.arguments                  # paced request helper above
             if isinstance(args, str):
                 args = json.loads(args)
             record["fetch_calls"].append(args)
@@ -305,17 +408,17 @@ def ask(client, document_text, question, graded, tools=None):
                 out = f"fetch failed: {type(exc).__name__}: {exc}"
             results.append({
                 "type": "function_result",
-                "name": call.name,
-                "call_id": call.id,
+                "name": step.name,
+                "call_id": step.id,
                 "result": [{"type": "text", "text": out}],
             })
 
         follow = {"model": ANSWER_MODEL, "input": results,
                   "previous_interaction_id": interaction.id, "tools": tools}
         if graded:
-            follow["response_format"] = GRADED_FORMAT
+            follow["response_format"] = graded_format(expected)
         try:
-            interaction = client.interactions.create(**follow)
+            interaction = call(client, pacer, **follow)
         except Exception as exc:                   # noqa: BLE001
             record["error"] = f"{type(exc).__name__}: {exc}"
             return record
@@ -344,13 +447,12 @@ def parse_graded(record):
     if "text" not in record:
         return None, record.get("error", "no response")
     try:
-        outer = json.loads(record["text"])
-        return json.loads(outer["answer_json"]), None
+        return json.loads(record["text"])["answer"], None
     except Exception as exc:                       # noqa: BLE001
         return None, f"unparseable answer: {type(exc).__name__}: {exc}"
 
 
-def judge(client, question, reference, candidate):
+def judge(client, pacer, question, reference, candidate):
     """Does `candidate` say the same thing as `reference`?
 
     Not "is it correct" — the claim under test is that answers do not MOVE, so
@@ -369,8 +471,8 @@ def judge(client, question, reference, candidate):
         f"SECOND (candidate):\n{candidate}\n"
     )
     try:
-        out = client.interactions.create(
-            model=JUDGE_MODEL, input=prompt, response_format=JUDGE_FORMAT)
+        out = call(client, pacer, model=JUDGE_MODEL, input=prompt,
+                   response_format=JUDGE_FORMAT)
         verdict = json.loads(out.output_text)
         return bool(verdict["same"]), verdict.get("why", "")
     except Exception as exc:                       # noqa: BLE001
@@ -382,7 +484,7 @@ def judge(client, question, reference, candidate):
 ARMS = ("raw", "compressed", "stored")
 
 
-def run_payload(client, sample_path, store_root, arms_wanted, do_judge, out):
+def run_payload(client, pacer, sample_path, store_root, arms_wanted, do_judge, out):
     """Every question on one payload, across the wanted arms."""
     module = checks_for(sample_path)
     ask_map = getattr(module, "ASK", {})
@@ -426,7 +528,8 @@ def run_payload(client, sample_path, store_root, arms_wanted, do_judge, out):
                 row["arms"][arm] = dict(row["arms"][twin], by_construction=twin)
                 continue
 
-            rec = ask(client, arms[arm]["text"], ask_map[key], graded=True,
+            rec = ask(client, pacer, arms[arm]["text"], ask_map[key],
+                      expected=expected,
                       tools=[FETCH_TOOL] if arm == "stored" else None)
             answer, problem = parse_graded(rec)
             rec.update(expected=expected, answer=answer, problem=problem,
@@ -445,8 +548,8 @@ def run_payload(client, sample_path, store_root, arms_wanted, do_judge, out):
             if twin and twin in row["arms"]:
                 row["arms"][arm] = dict(row["arms"][twin], by_construction=twin)
                 continue
-            row["arms"][arm] = ask(client, arms[arm]["text"], ask_map[key],
-                                   graded=False,
+            row["arms"][arm] = ask(client, pacer, arms[arm]["text"],
+                                   ask_map[key],
                                    tools=[FETCH_TOOL] if arm == "stored" else None)
         if do_judge and "raw" in row["arms"]:
             reference = row["arms"]["raw"].get("text", "")
@@ -454,7 +557,7 @@ def run_payload(client, sample_path, store_root, arms_wanted, do_judge, out):
                 if arm == "raw":
                     row["arms"][arm]["same_as_raw"] = True
                     continue
-                same, why = judge(client, ask_map[key], reference,
+                same, why = judge(client, pacer, ask_map[key], reference,
                                   row["arms"][arm].get("text", ""))
                 row["arms"][arm].update(same_as_raw=same, judge_note=why)
         results["judged"].append(row)
@@ -616,6 +719,9 @@ def main():
                         help="build every prompt, make no calls, print the bill")
     parser.add_argument("--no-judge", action="store_true",
                         help="skip the judged questions (they cost the Pro model)")
+    parser.add_argument("--rpm", type=int, default=DEFAULT_RPM,
+                        help=f"requests per minute ceiling (default {DEFAULT_RPM}; "
+                             "the free tier refuses the 21st in a rolling minute)")
     parser.add_argument("--regrade", metavar="RUNFILE",
                         help="re-grade a saved run without spending anything")
     args = parser.parse_args()
@@ -663,6 +769,7 @@ def main():
         return 2
 
     client = genai.Client()
+    pacer = Pacer(args.rpm)
     stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     out = {
         "started": stamp,
@@ -671,6 +778,7 @@ def main():
         "answer_model": ANSWER_MODEL,
         "judge_model": JUDGE_MODEL if not args.no_judge else None,
         "arms": list(arms_wanted),
+        "rpm": args.rpm,
         "thresholds": {"graded_gap": GRADED_ALLOWED_GAP,
                        "judged_gap": JUDGED_ALLOWED_GAP},
         "payloads": [],
@@ -688,7 +796,7 @@ def main():
         os.environ["MARGIN_STORE"] = store_root
         try:
             for path in paths:
-                run_payload(client, path, store_root, arms_wanted,
+                run_payload(client, pacer, path, store_root, arms_wanted,
                             not args.no_judge, out)
         finally:
             # Written before grading and before any summary, so a sweep that
