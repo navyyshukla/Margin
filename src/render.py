@@ -106,9 +106,13 @@ LEGEND_ENTRIES = [
     # It says outright that the value is absent and has to be fetched, because
     # the failure mode this stage introduces is a reader answering from the
     # columns around a handle instead of admitting it needs the content.
-    (HANDLE_PREFIX, r"\@nnnn[Nt] = this value is NOT in this document; fetch id "
-                    r"nnnn from the store named on the #store line. N is what it "
-                    r"costs in tokens, so you can decide before fetching"),
+    # The only legend entry that names a tool. A document is supposed to be
+    # self-describing, and one whose values live elsewhere is not self-describing
+    # unless it says how to reach them — a reader that has the fetch tool but
+    # cannot tell that these handles are what it is for gets the worst of both.
+    (HANDLE_PREFIX, r"\@nnnn[Nt] = this value is NOT in this document; N is what "
+                    r"it costs in tokens. Resolve with the margin `fetch` tool: "
+                    r"fetch(document=<id on the #store line>, ids=[nnnn, ...])"),
 ]
 
 

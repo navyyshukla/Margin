@@ -214,6 +214,40 @@ MUTATIONS = [
         "FileStore does not survive real bytes",
         gate="property_test.py",
     ),
+    # The MCP server. A third process boundary, so a third gate.
+    Mutation(
+        "the batch fetch quietly returns only the first id",
+        "src/mcp_server.py",
+        "    for cell_id in ids:",
+        "    for cell_id in ids[:1]:",
+        "a batch is not just the first id",
+        gate="mcp_test.py",
+    ),
+    Mutation(
+        "the response cap is removed",
+        "src/mcp_server.py",
+        "        if spent + cost > MAX_RESPONSE_TOKENS:",
+        "        if False:",
+        "over-cap batch truncates",
+        gate="mcp_test.py",
+    ),
+    Mutation(
+        "a missing object is returned as an empty value",
+        "src/mcp_server.py",
+        '            parts.append(f"[{key}] MISSING from the store'
+        ' — the content is gone, not empty")',
+        '            parts.append(f"[{key}]\\n")',
+        "reported as MISSING",
+        gate="mcp_test.py",
+    ),
+    Mutation(
+        "query returns the whole value instead of the matching spans",
+        "src/mcp_server.py",
+        '            content = "\\n…\\n".join(spans)',
+        "            content = content",
+        "returns the matching span",
+        gate="mcp_test.py",
+    ),
     Mutation(
         "bin/margin loses its symlink-resolution loop",
         "bin/margin",
