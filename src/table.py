@@ -57,9 +57,17 @@ MAX_RECORD_SEARCH_DEPTH = 4
 def find_record_array(data):
     """Locate the list-of-objects worth tabulating.
 
-    Returns (rows, path) where path is the key sequence leading to the list, so
-    decompression can rebuild whatever wrapped it. Returns (None, None) when
-    there is nothing table-shaped here.
+    Returns (rows, path, key_column). `path` is the key sequence leading to the
+    list, so decompression can rebuild whatever wrapped it; `key_column` names
+    the column holding a record map's own keys, and is None for a plain list.
+    Returns (None, None, None) when there is nothing table-shaped here.
+
+    This said "(rows, path)" and "(None, None)" until 2026-09-11, from before
+    #keyed added the third element. Nothing broke, because every caller unpacks
+    three and would have failed loudly otherwise — which is the point worth
+    recording: a docstring is the one claim in this file that no gate can read,
+    so it is the one that can go stale in silence (Rule 3's shape, one level up
+    from the document header).
 
     Picks the LARGEST candidate rather than the first one found. "First" was an
     accident of dict ordering: a payload with a small incidental list before the

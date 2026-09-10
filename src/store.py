@@ -121,7 +121,7 @@ def content_hash(text):
 
 
 def document_id(payload_text, pending=None):
-    """The name a document's index is filed under.
+    r"""The name a document's index is filed under.
 
     Derived from the payload rather than from the rendered document, which would
     be circular: the document cannot contain the id of an index built while
