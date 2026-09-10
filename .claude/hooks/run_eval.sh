@@ -71,13 +71,23 @@ if ! output=$("$PYTHON" "$PROJECT_DIR/src/cli_test.py" 2>&1); then
   exit 2
 fi
 
-# Asks whether the gate above can still fail — the question three rounds of code
-# review had to answer by hand, at about 80,000 tokens each.
-if ! output=$("$PYTHON" "$PROJECT_DIR/src/mutation_test.py" 2>&1); then
-  echo "a mutation SURVIVED after editing $file_path" >&2
-  echo "$output" >&2
-  exit 2
-fi
+# mutation_test.py deliberately does NOT run here. It ran here until 2026-09-11,
+# and it was ~45 of this chain's ~62 seconds — roughly three quarters of the cost
+# of every single edit to any src/*.py file. Without it this chain measures 17.0s
+# end to end (2026-09-11, timed through this script). Treat all of these as ±10%:
+# two runs of mutation_test the same afternoon gave 43.6s and 46.1s, which is why
+# the decision rests on the ratio and not on the second decimal.
+#
+# It is not skipped, and this is not Rule 12's hole: .githooks/pre-commit runs it
+# on every commit, against the staged tree. It moved from per-edit to per-commit,
+# which is the cadence its question actually has. "Can the other gates still
+# fail?" is a property of the gates, not of the edit in front of you — it changes
+# when a check is rewritten, not when a threshold moves — and nothing can reach
+# main without passing it (Rule 13 holds: it is still automated, not intended).
+#
+# The reason to care about the seconds: a gate that makes the loop painful is a
+# gate that gets bypassed, and a bypassed gate reports green while guarding
+# nothing. That is the same failure this file exists to prevent, one level up.
 
 # The third process boundary. cli_test covers argv and streams; this covers
 # JSON-RPC over a pipe, which is the only place the MCP protocol exists.

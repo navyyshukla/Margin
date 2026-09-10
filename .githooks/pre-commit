@@ -7,6 +7,11 @@
 #   2. The eval harness must pass when src/*.py is staged. A compression rule
 #      that changes answers should not be committable in the first place.
 #
+# Since 2026-09-11 this is also the ONLY place mutation coverage runs. It used to
+# run on every edit too, where it was ~45s of a ~62s chain; the PostToolUse hook
+# now stops before it and says why. So a commit is the boundary that question is
+# asked at, and --no-verify is the only way past it.
+#
 # Bypass with `git commit --no-verify` if you ever genuinely need to; that
 # should feel like a deliberate act, which is the point.
 
