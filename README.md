@@ -8,7 +8,10 @@ the answers I get back. Built as a learning project — rule-based first, revers
 feature at a time. See `CLAUDE.md` for the current architecture and decisions.
 
 **Status:** the JSON compressor works and is tested against eight different APIs.
-**41.6% overall**, and nothing ever comes out larger than it went in.
+**41.6% overall**, and nothing ever comes out larger than it went in. With
+`--store` and the MCP server, **73.7%** — bulk values move to a content store the
+model fetches from, and `docs/store.md` explains what that costs as well as what
+it saves.
 
 ```bash
 uv venv .venv && uv pip install -r requirements.txt   # once per clone
@@ -68,7 +71,7 @@ outcomes rather than gaps.
   before and after compression; any drift fails the build.
 - **Readable by a model, not just by a parser.** The document explains its own
   encodings, and that claim is checked by giving it to a model with no access to
-  this repo — three times so far, scored in `docs/cold-reads.md`.
+  this repo — four times so far, scored in `docs/cold-reads.md`.
 - **Every number measured, never copied.** Including from Headroom, whose
   thresholds would reject most of the results above (`docs/thresholds.md`).
 
@@ -82,10 +85,13 @@ outcomes rather than gaps.
 | `src/table.py` | decides the table's shape; renders no text |
 | `src/tokens.py` | counting tokens, in one place |
 | `src/render.py` | writes the document and reads it back, in one file so the two cannot drift |
+| `src/store.py` | the content store: bulk cells live here, not in the prompt |
+| `src/mcp_server.py` | the `fetch` tool — what makes Margin a tool the model calls |
 | `src/decompress.py` | the inverse |
 | `src/eval_harness.py` | asks the questions before and after |
 | `src/property_test.py` | generates payloads trying to break the format |
 | `src/cli_test.py` | runs the CLI as a subprocess and checks what it promises |
+| `src/mcp_test.py` | drives the MCP server as a subprocess over JSON-RPC |
 | `src/mutation_test.py` | breaks the CLI on purpose and checks that cli_test.py notices |
 | `docs/` | the written record — `docs/README.md` is the index of which file answers what |
 

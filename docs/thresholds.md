@@ -165,6 +165,69 @@ Projected 74.6% for the encoding that was chosen; the implementation landed at
 **74.4%**, the gap explained by the real `\@0001` being one character longer than
 the `@0001` that was priced.
 
+### `HASH_WIDTH = 24` (src/store.py) — and it was 12, wrongly
+
+96 bits, for both the content hash and the document id. **This was 12 (48 bits),
+and the comment justifying it was wrong in a way worth keeping.**
+
+It said "under 10⁻⁹ at the ~10⁴ distinct cells across the whole sample set". The
+arithmetic was right and the **scope** was wrong. A sample set is not the
+population: this store is one global namespace with no eviction that accumulates
+for years, so n is total objects ever written, not cells in one run.
+
+| objects | 48 bits | 96 bits |
+|---:|---:|---:|
+| 10⁴ | 1.8 × 10⁻⁷ | 6.3 × 10⁻²² |
+| 10⁶ | **0.18%** | 6.3 × 10⁻¹⁸ |
+| 10⁷ | **18%** | 6.3 × 10⁻¹⁶ |
+
+Found by comparing against Headroom, which uses 96 bits here and documents it
+against birthday bounds. Their store survives at any width because it evicts on a
+30-minute TTL — that is what keeps their n small, and it is precisely the
+difference the original comment failed to notice.
+
+Widening costs **1 token per document**, 21 across the sample set, because only
+the doc_id is written into the document; the content hash is not there at all,
+which is what the id/index indirection bought. There was never anything to
+economise against.
+
+A doc_id collision is worse than an object collision, which is why both are wide:
+two payloads sharing a doc_id means one document's handles resolve against the
+other's index, and every handle then returns **plausible wrong content** rather
+than failing.
+
+Rule 5, third instance in this project, and the same shape as both the ones
+`docs/shapes.md` records: a measurement whose scope was chosen to fit the
+hypothesis.
+
+### The handle's lure: `\@0001[142t]`
+
+A bare `\@0001` tells a reader nothing. It cannot judge whether it wants the
+value, so it either fetches every handle — which costs more than never having
+stored them — or fetches none and answers from the columns around it. Headroom's
+equivalent marker carries a description and a count for exactly this reason.
+
+Measured across the sample set, every figure a real render:
+
+| handle | set total | cost |
+|---|---:|---:|
+| bare `\@0001` | 74.0% | — |
+| **`\@0001[142t]`** | **73.5%** | **0.5 pts** |
+| `+ 32-char content preview` | 71.9% | 2.1 pts |
+| `+ 48-char preview` | 71.1% | 2.9 pts |
+| `+ 80-char preview` | 69.6% | 4.4 pts |
+
+The token count is taken at 0.5 points. **The content preview is not taken yet**,
+at four times the price — whether a reader needs it is what cold read #4 is for,
+and this format has twice paid for legibility *after* a read demonstrated the
+need (`HEADER_REPEAT_EVERY`, the keyed `#dict` line) rather than on suspicion.
+
+**The first version of this comparison was wrong**, and in the usual way: the
+"bare" baseline row was accidentally priced with the 12-hex sample rather than
+the handle actually shipped, which made `\@0001[142t]` look **761 tokens
+cheaper** than the thing it costs more than. A baseline that is not what it
+claims to be is Rule 5 wearing a different hat.
+
 ### The handle's own encoding, measured
 
 | encoding | example | set total |

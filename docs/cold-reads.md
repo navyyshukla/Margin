@@ -43,15 +43,16 @@ the table below.** The table is the single source of truth for the score —
 | [2026-09-08](cold-read-2026-09-08.md) | 13/13 | 6/10 | drifted across a run of empty cells |
 | [2026-09-08b](cold-read-2026-09-08b.md) | 16/16 | 7/10 | miscounted 13 positional columns; `json` used for a plainly numeric column; `#keyed"_key"` had no delimiter; the dotted-path convention was never stated |
 | [2026-09-09](cold-read-2026-09-09.md) | **11/12** | 8/10 | could not verify an index 61 deep into an unmarked `#dict` array, and **miscounted 58 as 57**; the repeating header was never explained |
+| [2026-09-10](cold-read-2026-09-10.md) | 12/12 | 8/10 | a `#dict` cell reads as a value, not a reference (`1` label vs key `1`) — the store's own handles were unambiguous |
 
-## What three reads have established
+## What four reads have established
 
 **Every read has found a real defect no automated gate could have seen**, and
 confidence has risen every time while the same weakness kept surfacing somewhere
 new — which is the argument for running this on every format change rather than
 trusting a good score.
 
-**The weakness is counting.** All three reads hit it. Reads #1 and #2 caught
+**The weakness is counting.** All four reads have leaned on it. Reads #1 and #2 caught
 themselves by recounting; read #3 could not verify an index 61 entries into an
 unmarked array and, on the very next question, miscounted 58 as 57. "Caught by
 recounting" is luck about how careful the reader was, not a property of the
@@ -63,17 +64,32 @@ So the format has now paid twice to remove counting, deliberately:
 |---|---|---|
 | header repeats every 40 rows (`HEADER_REPEAT_EVERY`) | +0.3% | read #2 |
 | `#dict` written as an object keyed by index, not a bare list | +0.2% | read #3 |
+| `[Nt]` on every handle, so a reader can price a fetch before making it | +0.5% | priced *before* read #4, which then proved it |
 
 Both times the alternative was to hope the reader counts carefully, and read #3
 is what that hope looks like when it fails. **Correctness is not the same as
 legibility, and only this test tells them apart.**
 
+## What read #4 settled
+
+It was run to answer one question: **does a reader who cannot fetch say so, or
+does it answer from the columns around the handle?** It said so, twice, without
+hedging — and it did more than refuse. Given only `[Nt]` on each handle it
+answered which absent body was longest and what all of them would cost, correctly
+and without retrieving anything, then said it would fetch *selectively*. That is
+the behaviour the store depends on, observed rather than hoped for.
+
+It also reconstructed the call — `fetch(document="22c8…", ids=[…])` — from the
+legend alone, having never been told the tool exists.
+
 ## The next read
 
-Cold read #4 is owed by the store: `#store` is a new header line and a handle is
-a new cell encoding. It also introduces a question none of the first three asked,
-and the one to design the read around — **a reader who cannot fetch must say so
-rather than infer.** Give it a handle-bearing document and no store access, and
-ask questions whose answers live behind a handle. "I need `@a1b2` to answer this"
-is the pass; anything reconstructed from neighbouring columns is the failure, and
-it is the failure mode that would make the whole store stage worse than useless.
+Owed when the next format line or cell encoding is added. Two things to watch,
+both recorded in read #4 and deliberately not fixed:
+
+- **A `#dict` cell reads as a value.** `1` in a `labels:dict` column means "key 1
+  on the `#dict` line" and sits beside columns where a small integer is genuinely
+  a count. No answer in four reads has been wrong because of it; the read that
+  gets one wrong is the one that buys the fix.
+- **Counting.** Every read has leaned on it. This one leaned hardest and held,
+  but it is still what the reader is least sure of.

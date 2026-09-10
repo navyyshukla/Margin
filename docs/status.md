@@ -76,14 +76,25 @@ server + CLI wiring → cold read #4 and a model-in-the-loop eval.
       `store=None` is the default, so every existing gate still exercises the
       storeless path. property_test 48 fixed cases with 636 of 2,000 random
       trials building a `#store`; mutation_test 11 → 17, all caught.
-- [ ] **PR #6 — MCP server and CLI wiring.** The step that makes Margin a tool
-      the model calls. Note before starting: the CLI's savings line will
-      overstate once the store is on, because content moved to disk is not
-      content removed. That number needs re-deciding, not just re-plumbing.
-- [ ] **PR #7 — cold read #4 and a model-in-the-loop eval.** The new ground:
-      `eval_harness.py` checks answers against *decompressed* data, so it never
-      exercises the decision to **call the tool**, which is the entire value of
-      the stage. Cold read #4 is mandatory — `#store` is a new header line and
-      `\@nnnn` a new cell encoding — and its question is new too: a reader who
-      cannot fetch must say so rather than infer from neighbouring columns.
-      Procedure in `docs/cold-reads.md`.
+- [x] **PR #6 — MCP server and CLI wiring** (2026-09-10). `--store` off by
+      default; `fetch(document, ids, query)` over stdio, batched, searchable and
+      capped. The savings line now reads "in the prompt" and states what is being
+      held, because content moved to disk is not content removed. Hash widened to
+      96 bits and the index made atomic, both from the Headroom review. Full
+      picture: `docs/store.md`.
+- [x] **Cold read #4** (2026-09-10). 12/12. Given a handle-bearing document and
+      no way to fetch, the reader said "not answerable" rather than inferring —
+      the failure that would have made this stage worse than useless. The `[Nt]`
+      lure paid for itself in the same read. `docs/cold-read-2026-09-10.md`.
+- [ ] **PR #7 — the model-in-the-loop eval, and it is the important one.**
+      Everything measured so far is about *documents*. Nothing yet shows a model
+      answers as well through a handle and a fetch as it does reading the value
+      in place, and no gate can see it: `eval_harness.py` checks answers against
+      *decompressed* data, so it never exercises the decision to **call the
+      tool** — which is the entire value of the stage. Until it exists, 73.7% is
+      a claim about prompts and not about answers.
+- [ ] **Deferred, and named rather than forgotten:** `margin export`/`import`
+      (a document is meaningless without its index and objects, and there is no
+      bundle unit); GC and `fsck` (a lost index leaks objects forever);
+      Headroom's TTL and retrieval counts; Parquet-style per-column statistics so
+      a reader can skip fetches entirely. All in `docs/store.md`.
