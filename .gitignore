@@ -9,3 +9,8 @@ __pycache__/
 # keep it local by default; un-ignore individual files you're sure are safe to share
 data/samples/*
 !data/samples/.gitkeep
+
+# Model-eval runs: every response from every arm, so they quote the sample
+# payloads back and are as private as those are. The *result* belongs in
+# docs/status.md, where it can be read without re-running anything.
+data/eval_runs/
