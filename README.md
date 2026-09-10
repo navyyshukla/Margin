@@ -77,11 +77,14 @@ here using the `*_url` convention — where it is the largest single contributor
   verified at runtime, and a transform that cannot be undone is not shipped past
   that line. What goes and what it costs: `docs/shapes.md`.
 - **Never worse.** If nothing helps, the input comes back unchanged.
-- **Answers must not move — as far as this can currently see.** 76 checks assert
-  that the dropping stage kept every field a question needs. They cannot see the
-  table format: the round-trip check above them has already proved it exact, so
-  they can only fail if it failed first. Whether a *model* answers the same
-  through a compressed document is not tested yet — `docs/status.md` PR #7.
+- **Answers must not move, and a model was finally asked.** 76 checks assert the
+  dropping stage kept every field a question needs; they cannot see the table
+  format, because the round-trip check above them already proved it exact. So
+  `src/eval_model.py` puts the documents to a reader that has never seen this
+  repo: **raw 72/72, compressed 71/72, stored 69/72** across eight payloads. The
+  one compressed miss is real and unfixed — `#keyed`'s synthetic `_key` column
+  gets reported as if it were data. The 16 comprehension questions still need a
+  judge. `docs/status.md` has the rest, including what that leaves unproven.
 - **Readable by a model, not just by a parser.** The document explains its own
   encodings, and that claim is checked by giving it to a model with no access to
   this repo — four times so far, scored in `docs/cold-reads.md`.

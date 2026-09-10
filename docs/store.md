@@ -148,9 +148,17 @@ tool exists.
   skip fetches entirely for many questions. Promising and entirely unmeasured,
   which is exactly why it is not built.
 
-**And the measurement that is still owed:** every figure here is about
-*documents*. Nothing yet shows that a model answers as well through a handle and
-a fetch as it does reading the value in place, and no gate can see it —
-`eval_harness.py` checks answers against *decompressed* data, so it never
-exercises the decision to call the tool. Until that eval exists, 73.7% is a claim
-about prompts, not about answers.
+**The measurement that was owed, and what it came back with (2026-09-11).**
+Every figure above is about *documents*, and `src/eval_model.py` now asks whether
+answers survive too. Across 72 graded questions and eight payloads, read by fresh
+readers given the document and nothing else: **raw 72/72, compressed 71/72,
+stored 69/72.** The single compressed miss is a legibility defect in `#keyed`
+rather than lost data (`docs/status.md`); the two stored misses are one reader
+mis-counting a column that decompresses identically in both arms.
+
+**But 73.7% is still not fully a claim about answers, and the gap is specific.**
+Retrieval was exercised exactly **once** in that run. On `github_issues` and
+`hn_stories` the store holds only bodies, and none of the graded questions reads
+a body — the ones that do are the 16 comprehension questions, which need a judge
+and are still unmeasured. So the store round-trips, resolves, and costs nothing
+in answer quality on the evidence available; that evidence is one fetch deep.

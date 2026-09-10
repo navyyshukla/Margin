@@ -625,6 +625,285 @@ def _print_row(label, row, arms_wanted, judged=False):
     print(f"  {label:52} {marks}{tail}")
 
 
+# --- the offline path: emit reading tasks, grade returned answers ----------
+#
+# The Gemini path above needs an API key with real quota. The free tier is ~20
+# requests a day per model (measured 2026-09-11), which cannot reach the ~194 a
+# sweep needs, and this is a personal project deliberately not funded — so it
+# needs a reader it does not pay for.
+#
+# The sweep therefore splits in two. `--emit` writes one self-contained reading
+# task per payload and arm; something reads them and writes answers back;
+# `--grade` scores those answers with exactly the same ground truth, thresholds
+# and summary the API path uses. What sits in the middle is not this script's
+# business, which is the point: the reader is swappable.
+#
+# The reader this was built for is a fresh Claude subagent per task — the method
+# docs/cold-reads.md has used by hand four times, now scored rather than eyeballed.
+#
+# **The isolation is the design, and it is not optional.** A reader that can see
+# this repo can open data/samples/ and answer from the payload instead of from
+# the document, and every number becomes a measurement of nothing. So a task file
+# carries the document and the questions and NOTHING else: no ground truth, no
+# repo path, no mention of Margin, not even which arm it is — "you are reading
+# the compressed one" is itself a hint about what to look for.
+#
+# It is also why whoever writes these questions cannot be the reader. By the time
+# the questions exist, their author knows the answers.
+
+TASK_HEADER = """You are answering questions about one document.
+
+Answer ONLY from the document below. Do not open any file and do not look
+anything up — everything needed is either in the document or genuinely absent
+from it. If the document does not contain what a question asks for, say so
+instead of guessing or inferring it from neighbouring values.
+
+Reply with a single JSON object mapping each question id to your answer, and
+nothing else:
+
+    {"Q1": "some string", "Q4": [24, 6], "Q13": false}
+
+Match the answer shape each question asks for exactly.
+
+If this task authorises a command below, also include the key "_fetches" with
+the number of times you ran it (0 if you never did):
+
+    {"Q1": "...", "_fetches": 2}
+"""
+
+FETCH_INSTRUCTIONS = """
+Some values have been moved out of this document. Each is marked \\@nnnn[Nt],
+where nnnn is its id and N is what it costs to read. To read some, run exactly:
+
+    {python} {script} --document <the id on the #store line> --ids 0001 0002
+
+Pass several ids in one command rather than one per command. You may add
+--query <text> to get back only the matching part of a long value. This command
+is the only tool you may use.
+"""
+
+FETCH_SCRIPT = '''#!/usr/bin/env python
+"""Resolve handles for one reading task. The only tool that task is given."""
+import argparse, os, sys
+sys.path.insert(0, {src!r})
+os.environ["MARGIN_STORE"] = {store!r}
+import mcp_server
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--document", required=True)
+parser.add_argument("--ids", nargs="+", required=True)
+parser.add_argument("--query")
+args = parser.parse_args()
+print(mcp_server.fetch(args.document, args.ids, args.query))
+'''
+
+
+def emit(paths, arms_wanted, out_dir, do_judge):
+    """Write one reading task per payload and arm, plus the answer key.
+
+    The key goes to _truth.json, which the reader is never pointed at. Task
+    files are named <payload>__<arm>.md so a human can keep track; nothing
+    inside a task file names the arm.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    store_root = os.path.join(out_dir, "store")
+    os.makedirs(store_root, exist_ok=True)
+    src_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # A real FileStore on disk, not a temp one: the reader resolves handles
+    # minutes or hours after emit ran, in a different process (Rule 15 — the
+    # implementation that ships is FileStore).
+    fetch_script = os.path.join(out_dir, "fetch.py")
+    with open(fetch_script, "w", encoding="utf-8") as handle:
+        handle.write(FETCH_SCRIPT.format(src=src_dir, store=store_root))
+
+    truth = {"answer_key": {}, "emitted": datetime.datetime.now().isoformat(),
+             "arms": list(arms_wanted), "tasks": [], "identical": []}
+    written = []
+
+    for path in paths:
+        module = checks_for(path)
+        ask_map = getattr(module, "ASK", {})
+        raw_text = open(path, encoding="utf-8").read()
+        _, data = detect_content_type(raw_text)
+        arms = build_arms(path, store_root)
+        name = os.path.basename(path)
+
+        graded = [(label, fn, False) for label, fn in module.PRESERVE_CHECKS]
+        graded += [(label, fn, True) for label, fn in module.REMOVED_CHECKS]
+
+        for arm in arms_wanted:
+            if arms[arm]["identical_to"]:
+                truth["identical"].append(
+                    {"payload": name, "arm": arm,
+                     "same_as": arms[arm]["identical_to"]})
+                continue
+
+            questions, key = [], {}
+            for label, fn, removed in graded:
+                qid = label.split()[0]
+                if qid not in ask_map:
+                    continue
+                try:
+                    value = fn(data)
+                except Exception:                  # noqa: BLE001
+                    continue
+                # A REMOVED check is the one question whose right answer depends
+                # on the arm: present in raw, gone everywhere else.
+                expected = as_json_value(value if arm == "raw" else False) \
+                    if removed else as_json_value(value)
+                key[qid] = {"expected": expected, "removed": removed,
+                            "label": label, "kind": "graded"}
+                questions.append((qid, ask_map[qid]))
+
+            if do_judge:
+                for label in module.MANUAL_QUESTIONS:
+                    qid = label.split()[0]
+                    if qid in ask_map:
+                        key[qid] = {"label": label, "kind": "judged"}
+                        questions.append((qid, ask_map[qid]))
+
+            body = [TASK_HEADER]
+            if arms[arm]["doc_has_store"]:
+                body.append(FETCH_INSTRUCTIONS.format(
+                    python=sys.executable, script=fetch_script))
+            body.append("\n--- BEGIN DOCUMENT ---\n")
+            body.append(arms[arm]["text"])
+            body.append("\n--- END DOCUMENT ---\n\nQUESTIONS\n")
+            for qid, text in questions:
+                body.append(f"{qid}. {text}")
+
+            task_path = os.path.join(out_dir, f"{name[:-5]}__{arm}.md")
+            with open(task_path, "w", encoding="utf-8") as handle:
+                handle.write("\n".join(body) + "\n")
+
+            truth["answer_key"][f"{name}|{arm}"] = key
+            truth["tasks"].append({
+                "task_file": task_path, "payload": name, "arm": arm,
+                "questions": len(questions),
+                "tokens": token_count(arms[arm]["text"]),
+                "has_store": arms[arm]["doc_has_store"]})
+            written.append((name, arm, len(questions),
+                            token_count(arms[arm]["text"]),
+                            arms[arm]["doc_has_store"]))
+
+    with open(os.path.join(out_dir, "_truth.json"), "w", encoding="utf-8") as h:
+        json.dump(truth, h, indent=2, default=str)
+
+    print(f"\n{len(written)} reading task(s) in {out_dir}")
+    print(f"{'payload':30} {'arm':11} {'questions':>9} {'tokens':>9}  store")
+    for name, arm, n, toks, has_store in written:
+        print(f"{name:30} {arm:11} {n:>9} {toks:>9,}  {'yes' if has_store else ''}")
+    skipped = len(truth["identical"])
+    print(f"\n{skipped} arm(s) skipped as byte-identical to one already asked.")
+    print(f"answer key: {os.path.join(out_dir, '_truth.json')} — "
+          f"never show this to whatever reads the tasks")
+    print(f"answers go in {os.path.join(out_dir, 'answers')}/<payload>__<arm>.json")
+    return 0
+
+
+def grade(out_dir, arms_wanted):
+    """Score whatever answers came back, with the same key and thresholds."""
+    with open(os.path.join(out_dir, "_truth.json"), encoding="utf-8") as handle:
+        truth = json.load(handle)
+    answers_dir = os.path.join(out_dir, "answers")
+
+    out = {"started": truth["emitted"],
+           # Named so a run file never implies a model that did not run it.
+           "answer_model": "(offline reader — see the task files)",
+           "pinned_answer_model": ANSWER_MODEL, "answer_model_is_pinned": False,
+           "judge_model": None, "arms": list(arms_wanted), "payloads": []}
+
+    by_payload, missing = {}, []
+    for task in truth["tasks"]:
+        name, arm = task["payload"], task["arm"]
+        answer_file = os.path.join(answers_dir, f"{name[:-5]}__{arm}.json")
+        if not os.path.exists(answer_file):
+            missing.append(f"{name}/{arm}")
+            continue
+        with open(answer_file, encoding="utf-8") as handle:
+            given = json.load(handle)
+
+        results = by_payload.setdefault(name, {
+            "payload": name, "graded": [], "judged": [],
+            "stored_has_handles": False})
+        if arm == "stored" and task["has_store"]:
+            results["stored_has_handles"] = True
+
+        # How many times the reader actually retrieved. Rule 1 again: an arm
+        # that answered without using the mechanism is not measuring it. In the
+        # API path this is counted from the tool loop; here only the reader
+        # knows, so it reports the number and the first run of this path had no
+        # way to ask — it warned that nobody fetched while one reader had.
+        fetches = given.pop("_fetches", None)
+        if fetches:
+            results.setdefault("fetches", 0)
+            results["fetches"] += int(fetches)
+
+        for qid, meta in truth["answer_key"][f"{name}|{arm}"].items():
+            rows = results["graded"] if meta["kind"] == "graded" \
+                else results["judged"]
+            row = next((r for r in rows if r["label"] == meta["label"]), None)
+            if row is None:
+                row = {"label": meta["label"], "arms": {}}
+                if meta["kind"] == "graded":
+                    row["removed"] = meta["removed"]
+                rows.append(row)
+            got = given.get(qid)
+            record = {"question": qid, "answer": got, "fetch_calls": [],
+                      "text": json.dumps(got, default=str)}
+            if meta["kind"] == "graded":
+                record["expected"] = meta["expected"]
+                record["correct"] = qid in given and same_json(
+                    meta["expected"], got)
+                if qid not in given:
+                    record["problem"] = "not answered"
+            row["arms"][arm] = record
+
+    # Arms that were never sent because they are byte-identical to one that was:
+    # copy the twin's result rather than scoring them as unanswered. Identical
+    # bytes cannot produce a different answer, and counting them as misses would
+    # invent a gap out of an optimisation.
+    for same in truth.get("identical", []):
+        results = by_payload.get(same["payload"])
+        if not results:
+            continue
+        for rows in (results["graded"], results["judged"]):
+            for row in rows:
+                twin = row["arms"].get(same["same_as"])
+                if twin is not None and same["arm"] not in row["arms"]:
+                    row["arms"][same["arm"]] = dict(
+                        twin, by_construction=same["same_as"])
+
+    out["payloads"] = list(by_payload.values())
+    if missing:
+        print(f"\nno answers yet for {len(missing)} task(s): "
+              f"{', '.join(missing[:8])}{' ...' if len(missing) > 8 else ''}")
+    if not out["payloads"]:
+        print("nothing scored — write answer files first.")
+        return 2
+
+    for payload in out["payloads"]:
+        print(f"\n=== {payload['payload']}")
+        for row in payload["graded"]:
+            _print_row(row["label"], row,
+                       [a for a in arms_wanted if a in row["arms"]])
+
+    runs_dir = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "data", "eval_runs")
+    os.makedirs(runs_dir, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    run_file = os.path.join(runs_dir, f"{stamp}-offline.json")
+    with open(run_file, "w", encoding="utf-8") as handle:
+        json.dump(out, handle, indent=2, default=str)
+    print(f"\nscored run written to {run_file}")
+
+    present = tuple(a for a in arms_wanted
+                    if any(a in r["arms"] for p in out["payloads"]
+                           for r in p["graded"]))
+    return summarise(out, present)
+
+
 def summarise(out, arms_wanted):
     """The verdict, against the thresholds set at the top of this file."""
     print("\n" + "=" * 72)
@@ -700,6 +979,7 @@ def summarise(out, arms_wanted):
         # carry no #store line at all, and on those a zero is the right answer.
         # The first live run warned on a coingecko-only sweep, which was a false
         # alarm dressed as a finding.
+        fetch_calls += sum(p.get("fetches", 0) for p in out["payloads"])
         with_handles = [p["payload"] for p in out["payloads"]
                         if p.get("stored_has_handles")]
         print(f"\n  the stored arm called fetch {fetch_calls} time(s)")
@@ -783,6 +1063,11 @@ def main():
     parser.add_argument("--rpm", type=int, default=DEFAULT_RPM,
                         help=f"requests per minute ceiling (default {DEFAULT_RPM}; "
                              "the free tier refuses the 21st in a rolling minute)")
+    parser.add_argument("--emit", metavar="DIR",
+                        help="write self-contained reading tasks to DIR instead "
+                             "of calling an API; anything can then read them")
+    parser.add_argument("--grade", metavar="DIR",
+                        help="score the answers written under DIR/answers/")
     parser.add_argument("--regrade", metavar="RUNFILE",
                         help="re-grade a saved run without spending anything")
     args = parser.parse_args()
@@ -817,6 +1102,14 @@ def main():
         print()
         estimate(paths, arms_wanted, not args.no_judge)
         return 0
+
+    # Both offline modes come before the SDK import and the key check on
+    # purpose: neither needs a network, an account or a cent, which is the
+    # entire reason they exist.
+    if args.emit:
+        return emit(paths, arms_wanted, args.emit, not args.no_judge)
+    if args.grade:
+        return grade(args.grade, arms_wanted)
 
     try:
         from google import genai
