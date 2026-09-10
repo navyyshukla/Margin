@@ -110,13 +110,13 @@ MUTATIONS = [
         "the compression guard is removed",
         "src/cli.py",
         "    try:\n"
-        "        text, notes = compress_json(data, original_text=raw_text)\n"
+        "        text, notes = compress_json(data, original_text=raw_text, store=backing)\n"
         "    except Exception as exc:\n"
         '        note(f"could not compress ({type(exc).__name__}: {exc})'
         ' — passed through unchanged")\n'
         "        sys.stdout.buffer.write(raw_bytes)\n"
         "        return 0",
-        "    text, notes = compress_json(data, original_text=raw_text)",
+        "    text, notes = compress_json(data, original_text=raw_text, store=backing)",
         "dies in compression",
     ),
     Mutation(
@@ -150,6 +150,119 @@ MUTATIONS = [
         "        if not any(value == seen for seen in distinct):",
         "MUST_DICTIONARY",
         gate="property_test.py",
+    ),
+    # The store. Same reasoning as the dictionary mutations — format-level
+    # behaviour, so property_test.py is the gate, and each names the specific
+    # check that must go red rather than "the suite fails".
+    Mutation(
+        "the store is switched off: nothing is ever stashed",
+        "src/store.py",
+        "            if gain < min_saving:\n"
+        "                continue",
+        "            if True:\n"
+        "                continue",
+        "MUST_STORE (no #store line)",
+        gate="property_test.py",
+    ),
+    Mutation(
+        "cells are stashed but the #store line is never written",
+        "src/compress.py",
+        '                table["store"] = doc_id',
+        "                pass",
+        "MUST_STORE",
+        gate="property_test.py",
+    ),
+    Mutation(
+        "the store commits even when the document is abandoned",
+        "src/compress.py",
+        "    if pending and final is text:",
+        "    if pending:",
+        "abandoned document left content behind",
+        gate="property_test.py",
+    ),
+    Mutation(
+        "a document decompresses without the store its values live in",
+        "src/decompress.py",
+        "        if store is None:",
+        "        if False:",
+        "MUST_STORE (decompressed without its store)",
+        gate="property_test.py",
+    ),
+    Mutation(
+        "the index keeps entries the document never references",
+        "src/store.py",
+        "def orphaned_ids(index, used_ids):",
+        "def orphaned_ids(index, used_ids):\n    return []",
+        "completeness detectors do not detect",
+        gate="property_test.py",
+    ),
+    Mutation(
+        "a missing object in the store is reported as fine",
+        "src/store.py",
+        "    return sorted(cell_id for cell_id, name in index.items() if not store.has(name))",
+        "    return []",
+        "completeness detectors do not detect",
+        gate="property_test.py",
+    ),
+    Mutation(
+        "stored objects are read back in text mode (CRLF becomes LF)",
+        "src/store.py",
+        '            with open(path, "rb") as handle:\n'
+        "                if handle.read() != data:",
+        '            with open(path, encoding="utf-8") as handle:\n'
+        "                if handle.read() != text:",
+        "FileStore does not survive real bytes",
+        gate="property_test.py",
+    ),
+    # The MCP server. A third process boundary, so a third gate.
+    Mutation(
+        "the batch fetch quietly returns only the first id",
+        "src/mcp_server.py",
+        "    for cell_id in ids:",
+        "    for cell_id in ids[:1]:",
+        "a batch is not just the first id",
+        gate="mcp_test.py",
+    ),
+    Mutation(
+        "the response cap is removed",
+        "src/mcp_server.py",
+        "        if cost > remaining:",
+        "        if False:",
+        "over-cap batch defers",
+        gate="mcp_test.py",
+    ),
+    Mutation(
+        "a missing object is returned as an empty value",
+        "src/mcp_server.py",
+        '            parts.append(f"[{key}] MISSING from the store'
+        ' — the content is gone, not empty")',
+        '            parts.append(f"[{key}]\\n")',
+        "reported as MISSING",
+        gate="mcp_test.py",
+    ),
+    Mutation(
+        "query returns the whole value instead of the matching spans",
+        "src/mcp_server.py",
+        '            content = "\\n…\\n".join(spans)',
+        "            content = content",
+        "returns the matching span",
+        gate="mcp_test.py",
+    ),
+    Mutation(
+        "an oversized value is deferred instead of truncated (a fetch loop)",
+        "src/mcp_server.py",
+        "            if spent:",
+        "            if True:",
+        "larger than the cap returns a labelled first part",
+        gate="mcp_test.py",
+    ),
+    Mutation(
+        "the document id is not normalised, so the quoted form fails",
+        "src/mcp_server.py",
+        "    document = document.strip().strip('\"').strip()",
+        "    pass",
+        "accepted with the quotes",
+        gate="mcp_test.py",
     ),
     Mutation(
         "bin/margin loses its symlink-resolution loop",

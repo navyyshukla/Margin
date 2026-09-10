@@ -184,3 +184,41 @@ store the model can query — which turns Margin from a text filter into a tool
 the model calls. That is a product decision and it reverses "no proxy server,
 not yet". The corrected census is the case *for* it: 60% of what is left, across
 four of eight payloads, is content no rule here will ever compress.
+
+---
+
+## The store, measured and built (2026-09-10)
+
+A cell costing more than `MIN_STORE_SAVING` tokens is replaced by a `\@0001`
+handle and its content moves to a store on disk. Built in PR #5; the CLI does not
+use it yet.
+
+| Payload | out now | with store | stored |
+|---|---:|---:|---:|
+| `github_issues.json` | 22,372 | **3,147 — 93.7%** | 33 cells |
+| `hn_stories.json` | 20,284 | **3,887 — 89.1%** | 52 cells |
+| `jsonplaceholder_posts.json` | 6,462 | **2,166 — 75.3%** | 100 cells |
+| the other five | | unchanged, byte for byte | 0 |
+| **total** | **71,022** | **31,104 — 41.6% → 74.4%** | |
+
+**Three of eight payloads, and nothing at all for five.** Worth saying in that
+order: the set total is driven entirely by the three, and overstating this is the
+mistake recorded above. The five it does not help lose nothing — a document with
+no qualifying cell carries no `#store` line and is byte-identical to what the
+same payload produced before the store existed.
+
+The 33 cells on GitHub are 30 issue bodies plus three long strings; the 52 on HN
+are mostly `children`. That is the bulk census above, arrived at from a different
+direction and without classifying anything as "bulk" — every cell was priced
+against a handle and these are the ones that won.
+
+### What the existing rules take first
+
+The store is measured **after** `#const` and `#dict`, so it never claims a saving
+they already took — and inside a single document that turns out to be a hard
+boundary. A bulk value repeated in every row is factored out by `#const`; a few
+repeated ones are claimed by `#dict`. Both get there before the store sees a cell.
+
+So the store's content addressing does not dedupe within a document — there is
+nothing left to dedupe. It dedupes **across** documents, which is where the same
+issue body fetched on two different days actually costs something.

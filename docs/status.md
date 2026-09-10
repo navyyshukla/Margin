@@ -64,10 +64,37 @@ wrong way. It missed `jsonplaceholder`'s short bodies and excluded `children` fo
 not being prose. The correction is recorded in `docs/shapes.md`, because the
 wrong version was about to become the reason not to build this.
 
-**Planned sequence.** Measure first (re-confirm the 42,334 figure holds after
-`#dict`, and project per-payload savings) → format + store + completeness gate →
-MCP server + CLI wiring → cold read #4 and a model-in-the-loop eval. The harness
-work this needs is in the `harness` skill's checklist; the new ground is that
-`eval_harness.py` checks answers against *decompressed* data, so it never
-exercises the decision to **call the tool**, which is the entire value of the
-stage.
+**Planned sequence.** Measure first → format + store + completeness gate → MCP
+server + CLI wiring → cold read #4 and a model-in-the-loop eval.
+
+- [x] **Measured** (2026-09-10). `src/measure_store.py` prices every cell against
+      a handle and renders the resulting document. 41.6% → 74.4% across the set,
+      concentrated in three payloads. Numbers in `docs/shapes.md`, thresholds and
+      the handle-encoding comparison in `docs/thresholds.md`.
+- [x] **PR #5 — the format and the store.** `\@0001` handles, a per-document id
+      with the `id -> hash` index on disk, `src/store.py`. The CLI is untouched:
+      `store=None` is the default, so every existing gate still exercises the
+      storeless path. property_test 48 fixed cases with 636 of 2,000 random
+      trials building a `#store`; mutation_test 11 → 17, all caught.
+- [x] **PR #6 — MCP server and CLI wiring** (2026-09-10). `--store` off by
+      default; `fetch(document, ids, query)` over stdio, batched, searchable and
+      capped. The savings line now reads "in the prompt" and states what is being
+      held, because content moved to disk is not content removed. Hash widened to
+      96 bits and the index made atomic, both from the Headroom review. Full
+      picture: `docs/store.md`.
+- [x] **Cold read #4** (2026-09-10). 12/12. Given a handle-bearing document and
+      no way to fetch, the reader said "not answerable" rather than inferring —
+      the failure that would have made this stage worse than useless. The `[Nt]`
+      lure paid for itself in the same read. `docs/cold-read-2026-09-10.md`.
+- [ ] **PR #7 — the model-in-the-loop eval, and it is the important one.**
+      Everything measured so far is about *documents*. Nothing yet shows a model
+      answers as well through a handle and a fetch as it does reading the value
+      in place, and no gate can see it: `eval_harness.py` checks answers against
+      *decompressed* data, so it never exercises the decision to **call the
+      tool** — which is the entire value of the stage. Until it exists, 73.7% is
+      a claim about prompts and not about answers.
+- [ ] **Deferred, and named rather than forgotten:** `margin export`/`import`
+      (a document is meaningless without its index and objects, and there is no
+      bundle unit); GC and `fsck` (a lost index leaks objects forever);
+      Headroom's TTL and retrieval counts; Parquet-style per-column statistics so
+      a reader can skip fetches entirely. All in `docs/store.md`.

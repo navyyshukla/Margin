@@ -1,1 +1,2 @@
 tiktoken
+mcp>=2.2

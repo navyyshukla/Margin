@@ -79,6 +79,14 @@ if ! output=$("$PYTHON" "$PROJECT_DIR/src/mutation_test.py" 2>&1); then
   exit 2
 fi
 
+# The third process boundary. cli_test covers argv and streams; this covers
+# JSON-RPC over a pipe, which is the only place the MCP protocol exists.
+if ! output=$("$PYTHON" "$PROJECT_DIR/src/mcp_test.py" 2>&1); then
+  echo "MCP contract FAILED after editing $file_path" >&2
+  echo "$output" >&2
+  exit 2
+fi
+
 ran=0
 for sample in "${SAMPLES[@]}"; do
   # Samples are gitignored real API payloads, so a fresh checkout has none.

@@ -41,10 +41,26 @@ Usage:
 import signal
 import sys
 
+import render
+import store as store_module
 from compress import compress_json, token_count
 from detect import detect_content_type
 
-USAGE = "usage: margin [-q] [<file.json>|-]   (with no path, reads stdin)"
+USAGE = ("usage: margin [-q] [--store] [<file.json>|-]   (with no path, reads stdin)")
+
+# --store is OFF by default, and that is the whole design of this flag.
+#
+# The everyday invocation is `curl ... | margin | pbcopy`, and what comes out of
+# it gets pasted into a chat. A document with `\@0001` handles in it is only
+# readable by a client that can reach this machine's store through the MCP
+# server -- paste it anywhere else and the model does not merely lack the
+# store, it has no fetch tool at all, so the handles are dead and the values
+# they stand for are silently missing at exactly the moment someone is relying
+# on them.
+#
+# So storing is valid only when a resolver is in the loop, and the default path
+# keeps producing a self-contained document, byte for byte what it produced
+# before the store existed.
 
 EXIT_USAGE = 2
 # 2, not 1: 1 is what an uncaught Python traceback already exits with, and
@@ -100,21 +116,45 @@ def parse_args(argv):
     """
     quiet = False
     wants_help = False
+    use_store = False
     paths = []
     for arg in argv:
         if arg in ("-q", "--quiet"):
             quiet = True
         elif arg in ("-h", "--help"):
             wants_help = True
+        elif arg == "--store":
+            use_store = True
         elif arg != "-" and arg.startswith("-"):
             raise CliError(f"unknown option {arg}\n{USAGE}")
         else:
             paths.append(arg)
-    return paths, quiet, wants_help
+    return paths, quiet, wants_help, use_store
 
 
-def summary(raw_text, out_text):
+def store_summary(held):
+    """The second half of the truth, when a store is in use.
+
+    "93.7% saved" on its own is a lie of omission once content moves to disk.
+    The old number meant the model reads that much less; this one means that
+    much went somewhere the model must go and fetch. Reporting one figure would
+    let the headline number quietly change meaning — the exact failure
+    docs/shapes.md records twice — so the values held are stated beside it and
+    the percentage is labelled "in the prompt" rather than "saved".
+    """
+    return f"{held} value(s) held in the store — fetchable, not discarded"
+
+
+def summary(raw_text, out_text, stored=False):
     """The one line worth seeing on every run: what this cost and what it saved.
+
+    `stored` changes the wording, not the arithmetic, and it has to. Without a
+    store "55.3% saved" means the reader reads that much less. With one,
+    "93.4%" means that much went somewhere the reader must go and fetch, and
+    calling both "saved" would let the headline number change meaning while
+    looking the same -- which is precisely the failure docs/shapes.md records
+    twice. So it reads "in the prompt", and store_summary() states what is
+    being held.
 
     Free, because compress_json has already counted both of these strings and
     token_count memoises — measured 16 ms per uncached count of the largest
@@ -125,7 +165,8 @@ def summary(raw_text, out_text):
     before = token_count(raw_text)
     after = token_count(out_text)
     saved = 1 - after / before
-    return f"{before:,} → {after:,} tokens ({saved:.1%} saved)"
+    label = "in the prompt" if stored else "saved"
+    return f"{before:,} → {after:,} tokens ({saved:.1%} {label})"
 
 
 def main(argv=None):
@@ -140,8 +181,9 @@ def main(argv=None):
             print(f"margin: {message}", file=sys.stderr)
 
     quiet = False
+    use_store = False
     try:
-        paths, quiet, wants_help = parse_args(argv)
+        paths, quiet, wants_help, use_store = parse_args(argv)
         if wants_help:
             print(USAGE)  # stdout, exit 0: asking for help is not a failure
             return 0
@@ -202,8 +244,15 @@ def main(argv=None):
         sys.stdout.buffer.write(raw_bytes)
         return 0
 
+    # Constructing a FileStore touches no disk; a store that cannot be written
+    # fails at put() time, inside the guard below, which passes the input
+    # through unchanged and says what broke. That is the right outcome and a
+    # loud one -- what must never happen is quietly inlining the cells and
+    # reporting a saving as though the store had worked.
+    backing = store_module.FileStore(store_module.default_root()) if use_store else None
+
     try:
-        text, notes = compress_json(data, original_text=raw_text)
+        text, notes = compress_json(data, original_text=raw_text, store=backing)
     except Exception as exc:
         note(f"could not compress ({type(exc).__name__}: {exc}) — passed through unchanged")
         sys.stdout.buffer.write(raw_bytes)
@@ -211,7 +260,17 @@ def main(argv=None):
 
     for message in notes:
         note(message)
-    note(summary(raw_text, text))
+
+    # Counted from the document rather than from the store, because the document
+    # is what the reader gets: a store that wrote ten objects while the document
+    # kept none of them would otherwise be reported as a saving.
+    held = 0
+    if use_store and text.startswith(render.FORMAT_MARKER):
+        held = len(store_module.used_ids(render.parse(text)))
+
+    note(summary(raw_text, text, stored=bool(held)))
+    if held:
+        note(store_summary(held))
 
     if text == raw_text:
         # compress_json declined to improve this one. Emit the bytes we read,

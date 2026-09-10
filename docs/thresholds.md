@@ -128,6 +128,162 @@ by pricing with `render.encode_cell`, the encoder that actually writes the
 document. The general form is Rule 4: a gate has to price the output that will
 really be produced, not a stand-in for it.
 
+## `MIN_STORE_SAVING = 20` (src/store.py)
+
+Tokens a single cell must save before its content moves out of the document and
+into the store. Same unit and the same reasoning as `MIN_DICT_SAVING`, and
+arrived at the same way — by pricing, never by a size heuristic.
+
+Derived 2026-09-10 by `src/measure_store.py`, which **renders the whole sample
+set at each candidate bar** rather than summing per-cell arithmetic:
+
+| bar | cells stored | set total |
+|---:|---:|---:|
+| 1 | 257 | 73.3% |
+| 5 | 209 | 73.2% |
+| 10 | 187 | 73.1% |
+| **20** | **166** | **72.8%** |
+| 50 | 67 | 70.1% |
+| 100 | 63 | 69.9% |
+
+The curve is flat to 20 and falls away after it: 20 keeps 99% of the saving
+while storing 91 fewer cells. Positive rather than zero for the reason
+`MIN_DICT_SAVING` is — a cell that breaks even still costs the reader a *fetch*
+to recover a value it could have read in place, and a fetch is far more expensive
+to a reader than a dictionary lookup.
+
+**The projection was checked against the real thing, and it had to be.** The
+first version of `measure_store.py` summed the cost of cells priced one at a
+time. Rendering the same documents disagreed by up to **86 tokens, 2.9% on
+`jsonplaceholder`** — tiktoken is context dependent, so a cell priced alone does
+not cost what it costs inside a CSV line — and it charged the fixed `#store` cost
+to payloads that store nothing and carry no `#store` line at all. There is now
+one path to a document size and no second one to disagree with it. Rule 1's
+shape, on a measurement rather than an encoder.
+
+Projected 74.6% for the encoding that was chosen; the implementation landed at
+**74.4%**, the gap explained by the real `\@0001` being one character longer than
+the `@0001` that was priced.
+
+### `MAX_RESPONSE_TOKENS = 8000` (src/mcp_server.py)
+
+What one `fetch` call may return. Measured 2026-09-10 against **every value the
+sample set actually stores** — 171 of them, across the three payloads the store
+helps:
+
+| median | p90 | p95 | p99 | max |
+|---:|---:|---:|---:|---:|
+| 53 | 631 | 885 | 1,916 | 2,313 |
+
+8,000 is ~3.5× the largest value this data produces, so no single fetch in the
+sample set is ever truncated, while still admitting a dozen median values before
+the cap bites.
+
+It read "roughly a large issue body, times a few" until review pointed out that
+this project measures its thresholds and that **this one has teeth**: it is what
+makes an oversized value unreturnable if the surrounding code gets that case
+wrong. Which it did — see below.
+
+**The case the number made reachable.** The cap was applied as
+`spent + cost > MAX_RESPONSE_TOKENS`, evaluated with `spent == 0` for the first
+id. A single value larger than the whole cap was therefore dropped, with a
+message telling the model to *"fetch them in a second call"* — advice that fails
+identically every time, which is a loop rather than an error. A 15,000-token
+issue body is exactly what `MIN_STORE_SAVING` sends to the store, so it was
+reachable on real data. Now a value that cannot fit is returned **truncated and
+labelled as a first part**, and only ids crowded out by *other* ids are deferred.
+
+`QUERY_CONTEXT_CHARS = 240` is a legibility knob rather than a threshold, and is
+chosen rather than measured — but its downside is bounded, not open:
+`_spans_matching` hands back the whole value when the spans do not come to less
+than it, so a too-generous window can never cost more than not querying at all.
+
+### `HASH_WIDTH = 24` (src/store.py) — and it was 12, wrongly
+
+96 bits, for both the content hash and the document id. **This was 12 (48 bits),
+and the comment justifying it was wrong in a way worth keeping.**
+
+It said "under 10⁻⁹ at the ~10⁴ distinct cells across the whole sample set". The
+arithmetic was right and the **scope** was wrong. A sample set is not the
+population: this store is one global namespace with no eviction that accumulates
+for years, so n is total objects ever written, not cells in one run.
+
+| objects | 48 bits | 96 bits |
+|---:|---:|---:|
+| 10⁴ | 1.8 × 10⁻⁷ | 6.3 × 10⁻²² |
+| 10⁶ | **0.18%** | 6.3 × 10⁻¹⁸ |
+| 10⁷ | **18%** | 6.3 × 10⁻¹⁶ |
+
+Found by comparing against Headroom, which uses 96 bits here and documents it
+against birthday bounds. Their store survives at any width because it evicts on a
+30-minute TTL — that is what keeps their n small, and it is precisely the
+difference the original comment failed to notice.
+
+Widening costs **1 token per document**, 21 across the sample set, because only
+the doc_id is written into the document; the content hash is not there at all,
+which is what the id/index indirection bought. There was never anything to
+economise against.
+
+A doc_id collision is worse than an object collision, which is why both are wide:
+two payloads sharing a doc_id means one document's handles resolve against the
+other's index, and every handle then returns **plausible wrong content** rather
+than failing.
+
+Rule 5, third instance in this project, and the same shape as both the ones
+`docs/shapes.md` records: a measurement whose scope was chosen to fit the
+hypothesis.
+
+### The handle's lure: `\@0001[142t]`
+
+A bare `\@0001` tells a reader nothing. It cannot judge whether it wants the
+value, so it either fetches every handle — which costs more than never having
+stored them — or fetches none and answers from the columns around it. Headroom's
+equivalent marker carries a description and a count for exactly this reason.
+
+Measured across the sample set, every figure a real render:
+
+| handle | set total | cost |
+|---|---:|---:|
+| bare `\@0001` | 74.0% | — |
+| **`\@0001[142t]`** | **73.5%** | **0.5 pts** |
+| `+ 32-char content preview` | 71.9% | 2.1 pts |
+| `+ 48-char preview` | 71.1% | 2.9 pts |
+| `+ 80-char preview` | 69.6% | 4.4 pts |
+
+The token count is taken at 0.5 points. **The content preview is not taken yet**,
+at four times the price — whether a reader needs it is what cold read #4 is for,
+and this format has twice paid for legibility *after* a read demonstrated the
+need (`HEADER_REPEAT_EVERY`, the keyed `#dict` line) rather than on suspicion.
+
+**The first version of this comparison was wrong**, and in the usual way: the
+"bare" baseline row was accidentally priced with the 12-hex sample rather than
+the handle actually shipped, which made `\@0001[142t]` look **761 tokens
+cheaper** than the thing it costs more than. A baseline that is not what it
+claims to be is Rule 5 wearing a different hat.
+
+### The handle's own encoding, measured
+
+| encoding | example | set total |
+|---|---|---:|
+| hex-4 | `@3f9a` | 74.3% |
+| hex-8 | `@3f9a2c1b` | 73.5% |
+| hex-12 | `@3f9a2c1b7e4d` | 72.8% |
+| hex-16 | `@3f9a2c1b7e4d5a6b` | 72.2% |
+| **per-document id** | `@0001` | **74.6%** |
+
+Putting the content hash straight in the document costs **1.8 points, ~2,200
+tokens** against a short id. So the document carries a short per-document id and
+the store keeps the `id -> hash` index **on disk**, where it never costs a prompt
+token. Content addressing survives the indirection, which is the point: objects
+still dedupe, and `get` still verifies that content hashes to its own name rather
+than trusting the filename.
+
+A shorter hash was the obvious compromise and is not safe: hex-8 is 32 bits, and
+at ~10⁴ cells the birthday probability is over 1%. A collision serves one cell's
+content for another's, which is data loss — the one outcome "never
+delete-and-hope" rules out. 12 hex is 48 bits, under 10⁻⁹, and `put` refuses to
+overwrite differing bytes anyway.
+
 ## `MIN_ROWS_TO_TABULATE = 2` (src/compress.py)
 
 The table's fixed cost is one header line, so it can only pay off once a key

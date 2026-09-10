@@ -31,6 +31,21 @@ costs ten lines and touches no import.
 ```
 margin f.json          margin < f.json          curl ... | margin
 margin -               margin -q f.json         margin --help
+margin --store f.json
+```
+
+`--store` moves bulk cells out of the document and into a content store, taking
+`github_issues.json` from 55.3% to 93.4%. **It is off by default and that is the
+design**: the output of the default pipeline gets pasted into a chat, and a chat
+without this machine's MCP server has no fetch tool at all — the handles would be
+dead and the values silently missing. See `docs/store.md`.
+
+With a store in use the summary line stops saying "saved", because content moved
+to disk is not content removed:
+
+```
+margin: 50,031 → 3,298 tokens (93.4% in the prompt)
+margin: 32 value(s) held in the store — fetchable, not discarded
 ```
 
 With no path and stdin a terminal, it prints usage and exits rather than

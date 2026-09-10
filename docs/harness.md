@@ -1,6 +1,6 @@
 # The harness, and the rule each part enforces
 
-Six gates and thirteen rules. Each rule exists because something got past the
+Seven gates and fifteen rules. Each rule exists because something got past the
 gates before it, and each is written down with the failure that bought it — a
 rule whose reason is forgotten is a rule someone deletes.
 
@@ -8,7 +8,8 @@ rule whose reason is forgotten is a rule someone deletes.
 |---|---|---|
 | `src/property_test.py` | Does the format survive shapes nobody wrote down? | no — generates its own |
 | `src/cli_test.py` | Does the tool keep the promises the tool makes? | no — generates its own |
-| `src/mutation_test.py` | Can `cli_test.py` still fail? | no — mutates the source |
+| `src/mcp_test.py` | Does the fetch tool resolve what the document promises? | no — builds its own |
+| `src/mutation_test.py` | Can the other gates still fail? | no — mutates the source |
 | `src/eval_harness.py` | Do the answers survive on the payloads I have? | yes |
 | `.claude/hooks/run_eval.sh` | Did Claude's last edit break any of them? | no |
 | `.githooks/pre-commit` | Is this commit allowed to exist? | no |
@@ -364,3 +365,64 @@ had flagged and no author would have thought to re-check. The fix was a fixture
 of unique per-row strings that no compression rule can factor out, plus an
 assertion on the premise itself: **the document must exceed the pipe buffer**,
 checked rather than assumed.
+
+## Rule 14 — A store is the first thing here that can lose half a document
+
+Every earlier stage failed loudly or not at all. The store introduces a failure
+that looks like success: a document whose handles do not resolve is still valid
+`#margin/v1`, still parses, and is missing exactly the content it was compressed
+to keep. CLAUDE.md's first decision is "originals are always kept, never
+delete-and-hope", and this is the first code capable of breaking it.
+
+So three things are refusals rather than degradations:
+
+- **`decompress` raises** when a document carries a `#store` line and no store is
+  given, instead of returning rows with unresolved handles in them. A caller
+  handed those would serialise something that parses fine and is wrong.
+- **`store.get` raises** on a missing object, and the MCP `fetch` tool reports
+  `MISSING from the store — the content is gone, not empty`. A model given `""`
+  answers as though the value were empty.
+- **`put` refuses to overwrite** an object whose bytes differ.
+
+And two completeness checks aimed at the *claim*, because a handle is a claim
+that content exists somewhere and round-trip equality can only see it while the
+store happens to be present: every handle must resolve, and no index entry may go
+unreferenced. Rule 3's shape, one layer out.
+
+**Both detectors were vacuous when written**, and the mutation suite proved it:
+gutting each to `return []` survived the whole gate, because normal operation
+never produces an orphan or a missing object, so neither had ever taken the
+branch it exists for. They are fed hand-built positives now. *A detector nobody
+has shown a positive to is not a detector.*
+
+## Rule 15 — Test the implementation that ships, not the one that is convenient
+
+`MemoryStore` exists because `property_test.py` runs thousands of trials and a
+gate that writes thousands of files is a gate someone turns off. That is correct.
+The consequence was not: **every store check ran on `MemoryStore`, so `FileStore`
+— the one that actually ships — had no coverage at all.**
+
+It was broken. Objects were read back in **text mode**, so Python's
+universal-newline translation turned `\r\n` into `\n` and the read-back never
+equalled what was written. `put` called that a hash collision and refused to
+store; `get` would have called it content changing underneath it. Both messages
+were confidently wrong about the cause, and GitHub issue bodies are CRLF, so this
+was the main path rather than an edge case.
+
+Found by running `margin --store` on a real payload — Rule 11's argument, at the
+next layer down. There is now exactly one check that uses a real directory, with
+CRLF and lone-`\r` content, writing every payload twice and re-opening the store
+from disk.
+
+**And that check was itself vacuous at first.** It ran the second write and
+looked at nothing, so once `compress_json` learned to degrade gracefully on a
+failed store write, a reintroduced text-mode read simply fell back to plain JSON
+and the check sailed past. Rule 12's question — what does this check let
+through? — answers "everything that fails quietly" for any call whose return
+value is discarded.
+
+The same mutation found a second bug: **`commit` sat outside `compress_json`'s
+try block**, so a store that could not be written took the whole compressor down
+rather than falling back to JSON, which is its documented contract. That is the
+argument for writing the mutation even when you are sure you already know what
+the bug was.

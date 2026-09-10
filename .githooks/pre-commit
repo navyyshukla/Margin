@@ -80,9 +80,23 @@ if ! "$PYTHON" "$SRC/cli_test.py"; then
   exit 1
 fi
 
-# Asks whether the gate above can still fail. Six checks in that file have gone
-# green while the behaviour they were named for was deleted; this breaks each
-# one on purpose and demands the matching check notice.
+# Sample-free too: it builds its own stored document in a temp directory. The
+# third process boundary — cli_test covers argv, streams and exit codes; this
+# covers JSON-RPC over a pipe, which is the only place the MCP protocol exists.
+# It spawns the server with sys.executable, so it runs here, out of the staged
+# scratch tree, with no .venv of its own.
+echo "pre-commit: running MCP contract (against the staged content)..."
+if ! "$PYTHON" "$SRC/mcp_test.py"; then
+  echo "" >&2
+  echo "pre-commit: MCP contract failed — commit refused." >&2
+  echo "  The fetch tool no longer resolves handles, or it lost the batch," >&2
+  echo "  query or truncation behaviour a reader depends on." >&2
+  exit 1
+fi
+
+# Asks whether the gates above can still fail. Six checks in cli_test.py have
+# gone green while the behaviour they were named for was deleted; this breaks
+# each one on purpose and demands the matching check notice.
 echo "pre-commit: running mutation coverage (against the staged content)..."
 if ! "$PYTHON" "$SRC/mutation_test.py"; then
   echo "" >&2

@@ -27,8 +27,10 @@ Usage: python src/property_test.py [trials]
 import json
 import random
 import sys
+import tempfile
 
 import render
+import store
 from compress import compress_json, strip_boilerplate
 from render import FORMAT_MARKER, LEGEND_PREFIX
 from decompress import decompress
@@ -198,6 +200,273 @@ def round_trips(payload):
         return False
 
 
+def store_round_trips(payload):
+    """The invariant again, with a store behind it: content comes back exact.
+
+    Same shape as round_trips, and the same trap one layer along — a store that
+    wrote nothing leaves every cell in the document, which round-trips perfectly
+    while doing none of the job. MUST_STORE asserts the #store line separately;
+    this asserts the data survives the trip through it.
+    """
+    try:
+        st = store.MemoryStore()
+        text, notes = compress_json(payload, store=st)
+        if any(broken in note for note in notes for broken in BROKEN_TABLE_NOTES):
+            return False
+        return same_json(decompress(text, st), strip_boilerplate(payload))
+    except Exception:
+        return False
+
+
+def store_index_is_complete(payload):
+    """Every handle resolves, and the index carries nothing the document lost.
+
+    Rule 3's shape, at the store. A handle is a *claim* that content exists
+    somewhere, and `decompress(compress(x)) == x` can only ever see that claim
+    while the store happens to be sitting right there — it cannot see a dangling
+    id, and it definitely cannot see an index entry the document never
+    references, because an index with extra rows decompresses perfectly.
+
+    Both halves matter and they fail differently: a missing object loses data,
+    an orphaned entry means the writer and the document disagree about what was
+    stored, and is how a store grows forever.
+    """
+    st = store.MemoryStore()
+    text, _ = compress_json(payload, store=st)
+
+    # The fallback path, and the one this check got wrong first: a payload the
+    # table does not help comes back as plain JSON, which render.parse rightly
+    # refuses. The interesting claim there is not "the index is consistent" but
+    # "nothing was written at all" — because compress_json stashes cells before
+    # it knows whether it will keep the table, and an abandoned document must
+    # leave the store exactly as it found it.
+    if not text.startswith(FORMAT_MARKER):
+        return not st.objects and not st.indexes
+
+    table = render.parse(text)
+    doc_id = table.get("store")
+    if not doc_id:
+        # Nothing was stored. Then no index may have been written either — an
+        # index for a document with no #store line is unreachable by
+        # construction, which is the orphan case at document scale.
+        return not st.indexes
+
+    index = st.read_index(doc_id)
+    if store.missing_handles(index, st):
+        return False
+    return not store.orphaned_ids(index, store.used_ids(table))
+
+
+def stored_document_refuses_to_decompress_alone(payload):
+    """A document whose values are in a store must not decompress without it.
+
+    The failure this stage introduces that nothing else in the harness can see:
+    silent partial output. Returning rows with unresolved handles sitting in
+    them would serialise to something that looks like a payload, passes a
+    JSON parse, and is missing exactly the content someone compressed it to
+    keep. "Never delete-and-hope" is the first decision in CLAUDE.md, and this
+    is the first thing built here that could break it.
+
+    Vacuous unless the payload actually stored something, so that is checked
+    first rather than assumed — Rule 12: a check that can only take the trivial
+    branch is not a check.
+    """
+    try:
+        st = store.MemoryStore()
+        text, _ = compress_json(payload, store=st)
+        if not render.parse(text).get("store"):
+            return None  # nothing stored; this case has nothing to say
+        try:
+            decompress(text)
+        except ValueError:
+            return True
+        return False  # it returned something, which is the bug
+    except Exception:
+        return False
+
+
+def dedupes_across_documents():
+    """One object on disk, two documents, and both still resolve.
+
+    Content addressing earns its keep here and only here. Inside one document,
+    repeated bulk content is taken by #const or #dict long before the store sees
+    it — so this is the case that would silently never run if it were written as
+    a single-payload property, which is Rule 12's shape: a check whose only
+    reachable branch is the trivial one.
+
+    Every value inside each document is distinct, so neither #const nor #dict
+    claims the column and the cells reach the store — the two documents then
+    share exactly one body between them. Getting this wrong is instructive and
+    was done twice while writing it: a body repeated *within* a document is taken
+    by #dict, and the test measured the store deduping something it never saw.
+    """
+    shared = f"{_BULK} shared between two documents"
+    first = [{"i": index, "a": shared if index == 0 else f"{_BULK} first {index}"}
+             for index in range(8)]
+    second = [{"i": index, "a": shared if index == 0 else f"{_BULK} second {index}"}
+              for index in range(8)]
+
+    st = store.MemoryStore()
+    first_text, _ = compress_json(first, store=st)
+    objects_after_first = len(st.objects)
+    second_text, _ = compress_json(second, store=st)
+
+    # The premise, checked rather than assumed: if an existing rule claimed these
+    # columns there would be nothing in the store and every count below would be
+    # trivially satisfied by zero.
+    if objects_after_first != 8:
+        return False
+    # The shared body must not have been written a second time.
+    if len(st.objects) - objects_after_first != 7:
+        return False
+    # ...and both documents must still read back exactly.
+    return (same_json(decompress(first_text, st), strip_boilerplate(first))
+            and same_json(decompress(second_text, st), strip_boilerplate(second))
+            and len(st.indexes) == 2)
+
+
+def file_store_survives_real_bytes():
+    """FileStore, against a real directory, with content that broke it.
+
+    Every other store check runs on MemoryStore, because this file runs thousands
+    of trials and a gate that writes thousands of files is a gate someone turns
+    off. The consequence was that **the implementation that actually ships had no
+    coverage at all** — and it was broken: objects were read back in text mode,
+    so Python's universal-newline translation turned `\\r\\n` into `\\n`, the
+    read-back never equalled what was written, and `put` reported a hash
+    collision while `get` reported that the content had changed underneath it.
+    Both messages were confidently wrong about the cause.
+
+    Real prose is full of carriage returns — GitHub issue bodies are CRLF — so
+    this was not an edge case, it was the main path. Rule 12: the environment a
+    check runs in has to be the environment the code runs in, and for exactly one
+    check here that has to be a real filesystem.
+
+    So: a handful of payloads, once, on disk. Cheap enough to always run.
+    """
+    crlf = "A body with Windows line endings.\r\n\r\nSecond paragraph.\r\n" * 12
+    payloads = [
+        [{"i": index, "a": f"{crlf} row {index}"} for index in range(8)],
+        # A lone \r too: text mode translates that as well, and it is the case a
+        # \r\n-only fixture would silently stop covering.
+        [{"i": index, "a": f"line one\rline two {_BULK} {index}"} for index in range(8)],
+        bulky(),
+    ]
+
+    with tempfile.TemporaryDirectory() as root:
+        st = store.FileStore(root)
+        for payload in payloads:
+            text, _ = compress_json(payload, store=st)
+            if not text.startswith(FORMAT_MARKER):
+                return False
+            if render.STORE_PREFIX not in text:
+                return False  # the premise: nothing stored means nothing tested
+            if not same_json(decompress(text, st), strip_boilerplate(payload)):
+                return False
+
+        # Writing the same payload a second time must be a no-op, not a
+        # collision — this is the exact shape the text-mode bug took, and
+        # `put` is the only place that compares stored bytes against new ones.
+        #
+        # The RESULT is asserted, not just the call. The first version ran these
+        # and looked at nothing, so once compress_json learned to degrade
+        # gracefully on a failed store write, a reintroduced text-mode read fell
+        # back to plain JSON and this check sailed past it. Rule 12: the
+        # question is what the check lets through, and a call whose return value
+        # is discarded lets through everything that fails quietly.
+        for payload in payloads:
+            again, notes = compress_json(payload, store=st)
+            if render.STORE_PREFIX not in again:
+                return False
+            if any("store write failed" in note for note in notes):
+                return False
+
+        # And a store re-opened from the same directory still resolves — the
+        # index has to survive being written and read as files, not just held.
+        reopened = store.FileStore(root)
+        text, _ = compress_json(payloads[0], store=reopened)
+        return same_json(decompress(text, reopened), strip_boilerplate(payloads[0]))
+
+
+def detects_a_broken_store():
+    """Feed the completeness detectors a store that is actually broken.
+
+    store_index_is_complete() runs on every fixed case and every random trial and
+    has never once seen a real orphan or a real missing object, because normal
+    operation does not produce them. That makes it a check whose only reachable
+    branch is "nothing wrong" — Rule 12 exactly — and the mutation suite proved
+    it: gutting both detectors to `return []` survived the entire gate.
+
+    So the detectors get positives, built by hand. Without this, every
+    completeness assertion above is decoration.
+    """
+    st = store.MemoryStore()
+    text, _ = compress_json(bulky(), store=st)
+
+    # The premise, and it must FAIL rather than raise. The first version called
+    # render.parse straight away, and with the store switched off `bulky()` is
+    # not a #margin document at all — its bodies are long and unique, so the
+    # table saves almost nothing over compact JSON and falls below
+    # MIN_TABLE_SAVING. parse rightly refused, this function raised, and a
+    # *crashed* gate reports no failure at all: the mutation suite read that as
+    # "nothing noticed" and two mutations that were being caught correctly one
+    # line further down were reported as survivors. A check that explodes is not
+    # a check that fails.
+    #
+    # It is also the neatest demonstration of why the #store line is worth
+    # asserting separately: without the store this payload has no table either.
+    if not text.startswith(FORMAT_MARKER):
+        return False
+    table = render.parse(text)
+    doc_id = table.get("store")
+    if not doc_id:
+        return False
+    index = st.read_index(doc_id)
+    if not index:
+        return False
+
+    # A missing object: the index still claims it, the store no longer has it.
+    broken = dict(index)
+    victim = sorted(broken)[0]
+    without_object = store.MemoryStore()
+    without_object.objects = {name: value for name, value in st.objects.items()
+                              if name != broken[victim]}
+    if store.missing_handles(broken, without_object) != [victim]:
+        return False
+
+    # An orphan: an index entry the document never references.
+    with_orphan = dict(index)
+    with_orphan["9999"] = with_orphan[victim]
+    if store.orphaned_ids(with_orphan, store.used_ids(table)) != ["9999"]:
+        return False
+
+    # And an intact store must still come back clean, or the detectors are just
+    # returning "broken" for everything.
+    return (not store.missing_handles(index, st)
+            and not store.orphaned_ids(index, store.used_ids(table)))
+
+
+def abandoning_a_document_leaves_the_store_clean():
+    """Stash cells, then discard the document, and write nothing.
+
+    compress_json replaces cells with handles before it knows whether it will
+    keep the table, so every path that abandons the document afterwards must
+    leave the store as it found it. The random sweep cannot reach this: once bulk
+    cells are stored the document is far smaller than the JSON it is compared
+    against, so it never loses on MIN_TABLE_SAVING.
+
+    It is reachable through the one comparison the caller controls —
+    `original_text`. compress_json's promise is to hand back the original when
+    the document does not beat it, so passing a tiny original exercises exactly
+    the branch that discards a document with cells already stashed.
+    """
+    st = store.MemoryStore()
+    text, notes = compress_json(bulky(), original_text="[]", store=st)
+    if text != "[]" or not notes:
+        return False  # the premise: this must actually have been abandoned
+    return not st.objects and not st.indexes
+
+
 def shrink_safe(payload):
     """shrink(), for the degrades-safely property."""
     return _shrink(payload, degrades_safely)
@@ -307,8 +576,69 @@ MUST_NOT_DICTIONARY = [
     [{"i": index, "a": ["x", "y"][index % 2]} for index in range(20)],
 ]
 
+_BULK = ("A body long enough that moving it out of the document beats leaving "
+         "it in, by more than MIN_STORE_SAVING tokens. Real issue bodies and "
+         "post bodies are the shape this stands in for, and the bar is measured "
+         "in src/measure_store.py rather than guessed at here. ") * 3
+# Sized against the threshold rather than eyeballed: a case built from a short
+# string would store nothing and quietly test the gate refusing, which is the
+# mistake _PAD above exists to record for #dict.
+
+
+def bulky(rows=8):
+    """Rows with one cell well over the storing bar, and one well under."""
+    return [{"i": index, "small": "x", "body": f"{_BULK} row {index}"}
+            for index in range(rows)]
+
+
+MUST_STORE = [
+    # Rule 1, aimed at this encoding. compress_json falls back to plain JSON
+    # whenever it cannot prove a table correct, and a store that silently wrote
+    # nothing still round-trips perfectly — the cells would simply still be in
+    # the document. These assert the #store LINE IS THERE. A case here that
+    # merely round-trips has proved nothing at all.
+    bulky(),
+    # A bulk cell in a `json` column: the handle must be recognised before the
+    # type dispatch, or decode_cell hands `\@0001` to json.loads.
+    [{"i": index, "a": [{"text": _BULK, "n": index}] if index % 2 else 5}
+     for index in range(8)],
+    # A bulk cell in a nullable column, so \N and \@nnnn coexist.
+    [{"i": index, "a": None if index % 3 == 0 else f"{_BULK} {index}"}
+     for index in range(9)],
+]
+# There is deliberately no "identical bulk value in every row" case here. It was
+# written, and it failed: #const factors a column that never varies out of the
+# table entirely, so the store never sees a cell and no #store line is written.
+# The same holds one step down — a column drawing on a few repeated long values
+# is claimed by #dict. Within a single document, repeated bulk content is always
+# taken by an existing rule before the store is reached, which is the store being
+# measured after them working exactly as intended.
+#
+# So the store's dedup is not reachable inside one document, and testing it there
+# would have been testing something that cannot happen. It is reachable across
+# documents — the same issue body fetched on two different days — and that is
+# what dedupes_across_documents() below checks instead.
+
+MUST_NOT_STORE = [
+    # Everything short. Storing here would cost a handle to save nothing, and
+    # every cell would become a fetch the reader has to make to learn "x".
+    [{"i": index, "a": ["x", "y"][index % 2]} for index in range(20)],
+    # Repetitive AND long — but #dict gets there first, so by the time the store
+    # sees these cells they are single-digit indices. This is the case that
+    # proves the store is measured after the existing rules and does not
+    # double-count what they already took.
+    low_cardinality(["A LONG REPEATED VALUE THAT #dict SHOULD CLAIM FIRST",
+                     "ANOTHER LONG REPEATED VALUE FOR #dict TO CLAIM"]),
+]
+
 MUST_TABULATE = [
     # The encoder has to get these right, not dodge them.
+    # A literal value that looks exactly like a handle. It must survive as the
+    # string it is, not be mistaken for a fetch — the ambiguity the `\@` marker
+    # was chosen to make impossible (encode_cell doubles a leading backslash, so
+    # this writes as `\\@0001` and cannot match `\@`).
+    repeated("\\@0001", "z"),
+    repeated("\\@", "z"),
     repeated(["\\N"], ["z"]),                      # one-element array reads as null
     repeated(["\\A"], ["z"]),                      # ... as empty array
     repeated(["\\E"], ["z"]),                      # ... as empty string
@@ -550,6 +880,37 @@ def main():
         if not round_trips(payload) or render.DICT_PREFIX in text:
             failures.append(("MUST_NOT_DICTIONARY (built one anyway)", index, payload))
 
+    # Three claims per case. The #store line must be there (a store that wrote
+    # nothing round-trips perfectly), the data must survive the trip, and the
+    # index must be complete — which no round-trip can see.
+    for index, payload in enumerate(MUST_STORE):
+        text, _ = compress_json(payload, store=store.MemoryStore())
+        if render.STORE_PREFIX not in text:
+            failures.append(("MUST_STORE (no #store line)", index, payload))
+        elif not store_round_trips(payload):
+            failures.append(("MUST_STORE (did not round-trip)", index, payload))
+        elif not store_index_is_complete(payload):
+            failures.append(("MUST_STORE (index incomplete or orphaned)", index, payload))
+        elif stored_document_refuses_to_decompress_alone(payload) is not True:
+            failures.append(("MUST_STORE (decompressed without its store)", index, payload))
+
+    for index, payload in enumerate(MUST_NOT_STORE):
+        text, _ = compress_json(payload, store=store.MemoryStore())
+        if render.STORE_PREFIX in text:
+            failures.append(("MUST_NOT_STORE (stored anyway)", index, payload))
+
+    if not dedupes_across_documents():
+        failures.append(("STORE (no dedup across documents, or a document broke)", 0, []))
+
+    if not file_store_survives_real_bytes():
+        failures.append(("STORE (FileStore does not survive real bytes on disk)", 0, []))
+
+    if not detects_a_broken_store():
+        failures.append(("STORE (the completeness detectors do not detect)", 0, []))
+
+    if not abandoning_a_document_leaves_the_store_clean():
+        failures.append(("STORE (abandoned document left content behind)", 0, []))
+
     for index, (payload, expected) in enumerate(EXPECTED_PATHS):
         found = path_chosen(payload)
         if found != expected:
@@ -561,6 +922,7 @@ def main():
     # so a silently-abandoned table is a failure.
     tabulated = 0
     dictionaried = 0
+    stored = 0
     for _ in range(trials):
         payload = random_payload(rng, SAFE_KEYS)
         if not round_trips(payload):
@@ -576,6 +938,14 @@ def main():
         tabulated += document.startswith(FORMAT_MARKER)
         dictionaried += render.DICT_PREFIX in document
 
+        # The store is exercised on the random sweep too, and its completeness
+        # checked there — the fixed MUST_STORE cases are shapes someone thought
+        # of, and Rule 2's whole point is that those are not the ones that break.
+        if not store_index_is_complete(payload):
+            failures.append(("random/store-index-incomplete", seed, payload))
+            break
+        stored += render.STORE_PREFIX in compress_json(payload, store=store.MemoryStore())[0]
+
     # Sweep 2: keys the format cannot express. Degrading is the correct answer;
     # crashing or losing data is not.
     for _ in range(trials // 4):
@@ -585,12 +955,14 @@ def main():
             break
 
     fixed = (len(MUST_TABULATE) + len(MAY_DEGRADE)
-             + len(MUST_DICTIONARY) + len(MUST_NOT_DICTIONARY))
+             + len(MUST_DICTIONARY) + len(MUST_NOT_DICTIONARY)
+             + len(MUST_STORE) + len(MUST_NOT_STORE))
     # The tabulated count is printed because a run where nothing tabulated would
     # pass while testing only json.dumps — a green result that means nothing.
     # If it ever reads 0, the generator is broken, not the compressor.
     print(f"property test: {fixed} fixed cases, {trials} safe-key trials "
-          f"({tabulated} built a table, {dictionaried} built a #dict), "
+          f"({tabulated} built a table, {dictionaried} built a #dict, "
+          f"{stored} built a #store), "
           f"{trials // 4} awkward-key trials, seed {seed}")
     if tabulated == 0:
         print("  WARNING: no trial built a table — the random sweep proved nothing")
