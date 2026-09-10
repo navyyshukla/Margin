@@ -74,3 +74,27 @@ MANUAL_QUESTIONS = [
     "C9  which coin has the largest market cap",
     "C10 which coins are up over the last 24 hours",
 ]
+
+# Prose for src/eval_model.py; see the note in checks_github_issues.py for why
+# each one states the answer shape.
+#
+# C6 has no entry on purpose. It asks what Python type each market cap decoded
+# to, which is a question about the decoder rather than about the data — there is
+# no way to phrase it to a reader of a document. src/eval_model.py lists it as
+# not-asked, with that reason, on every run.
+ASK = {
+    "C1": "How many coins are in this data? Answer with a number.",
+    "C2": "What are the coin ids? Answer as an array of strings sorted "
+          "alphabetically.",
+    "C3": "What is bitcoin's usd price? Answer with a number.",
+    "C4": "Does every coin carry exactly the same set of fields? Answer true or "
+          "false.",
+    "C5": "What is each coin's usd price? Answer as an object mapping coin id to "
+          "its usd price.",
+    "C7": "Which coins have a negative usd_24h_change? Answer as an array of coin "
+          "ids sorted alphabetically.",
+    "C8": "Give the complete record for ethereum, as an object with every field it "
+          "has.",
+    "C9": "Which coin has the largest market cap?",
+    "C10": "Which coins are up over the last 24 hours?",
+}

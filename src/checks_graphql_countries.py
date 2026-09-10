@@ -99,3 +99,30 @@ MANUAL_QUESTIONS = [
     "G12 which countries in South America use Spanish",
     "G13 name three countries whose capital you can find here and say what continent each is on",
 ]
+
+# Prose for src/eval_model.py; see the note in checks_github_issues.py for why
+# each one states the answer shape.
+ASK = {
+    "G1": "How many countries are listed? Answer with a number.",
+    "G2": "What is the name of the country with code JP?",
+    "G3": "What is the capital of the country with code FR?",
+    "G4": "What is the continent of the country with code BR? Answer as an object "
+          "with a single 'name' field.",
+    "G5": "What are the languages of the country with code CH? Answer as an array "
+          "of objects, each with 'code' and 'name', in the order they appear.",
+    "G6": "Which countries use the currency EUR? Answer as an array of country "
+          "codes sorted alphabetically.",
+    "G7": "What distinct continent names appear? Answer as an array of strings "
+          "sorted alphabetically.",
+    "G8": "Which countries have a null capital? Answer as an array of country "
+          "codes sorted alphabetically.",
+    "G9": "What is the emoji flag of the country with code IN? Give the emoji "
+          "characters themselves.",
+    "G10": "Which countries have more than two languages? Answer as an array of "
+           "country codes sorted alphabetically.",
+    "G11": "Does the root object have only a 'data' key, and does 'data' have only "
+           "a 'countries' key? Answer true or false.",
+    "G12": "Which countries in South America use Spanish?",
+    "G13": "Name three countries whose capital you can find here, and say what "
+           "continent each is on.",
+}

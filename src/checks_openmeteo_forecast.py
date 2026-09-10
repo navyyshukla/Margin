@@ -87,3 +87,27 @@ MANUAL_QUESTIONS = [
     "O10 roughly what is the temperature trend over the week",
     "O11 which day looks windiest",
 ]
+
+# Prose for src/eval_model.py; see the note in checks_github_issues.py for why
+# each one states the answer shape.
+#
+# O6 has no entry on purpose: its answer is all 168 temperatures (1,005
+# characters). Typing that back is a transcription test. Listed as not-asked,
+# with that reason, on every run.
+ASK = {
+    "O1": "How many hourly readings are there? Answer with a number.",
+    "O2": "Are all of the hourly series the same length as one another? Answer "
+          "true or false.",
+    "O3": "What are the first and last hourly timestamps? Answer as a two-element "
+          "array: [first, last].",
+    "O4": "At which timestamp does the highest temperature_2m occur, and what is "
+          "that temperature? Answer as a two-element array: [timestamp, temperature].",
+    "O5": "What is the lowest temperature_2m? Answer with a number.",
+    "O7": "What are the hourly units? Answer as an object mapping each hourly "
+          "field name to its unit string.",
+    "O8": "What are the latitude, longitude, elevation and timezone? Answer as a "
+          "four-element array in that order.",
+    "O9": "What is relative_humidity_2m at the first hour? Answer with a number.",
+    "O10": "Roughly what is the temperature trend over the week?",
+    "O11": "Which day looks windiest?",
+}

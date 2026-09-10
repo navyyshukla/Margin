@@ -77,3 +77,24 @@ MANUAL_QUESTIONS = [
     "J9  what is post 42 about",
     "J10 which user writes the shortest posts on average",
 ]
+
+# Prose for src/eval_model.py; see the note in checks_github_issues.py for why
+# each one states the answer shape.
+ASK = {
+    "J1": "How many posts are in this data? Answer with a number.",
+    "J2": "What is the title of the post with id 50? Give the exact title string.",
+    "J3": "What is the full body of the post with id 1? Reproduce it exactly, "
+          "including its line breaks.",
+    "J4": "Which distinct userId values appear? Answer as an array of numbers in "
+          "ascending order.",
+    "J5": "How many posts does each userId have? Answer as an object mapping the "
+          "userId, written as a string, to its count.",
+    "J6": "Are the post ids exactly the contiguous range 1..N with no gaps? "
+          "Answer true or false.",
+    "J7": "Which title is the longest by character count? Give the exact title "
+          "string.",
+    "J8": "What distinct sets of field names appear across the posts? Answer as an "
+          "array of arrays, with each inner array sorted alphabetically.",
+    "J9": "What is post 42 about?",
+    "J10": "Which user writes the shortest posts on average?",
+}

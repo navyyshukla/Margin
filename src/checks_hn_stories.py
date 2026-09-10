@@ -103,3 +103,26 @@ MANUAL_QUESTIONS = [
     "H12 summarize what the top 3 stories are about",
     "H13 which stories are about AI companies, and what happened in each",
 ]
+
+# Prose for src/eval_model.py; see the note in checks_github_issues.py for why
+# each one states the answer shape.
+ASK = {
+    "H1": "What is the title of the story with the highest points? Give the exact "
+          "title string.",
+    "H2": "Who is the author of the story whose objectID is 16582136?",
+    "H3": "What is the url of the story whose objectID is 16582136?",
+    "H4": "How many stories are in this data? Answer with a number.",
+    "H5": "What is the sum of points across all stories? Answer with a number.",
+    "H6": "What is the sum of num_comments across all stories? Answer with a number.",
+    "H7": "How many distinct authors are there? Answer with a number.",
+    "H8": "Which stories have no url (null, absent or empty)? Answer as an array "
+          "of their objectID strings, in the order they appear.",
+    "H9": "What is the title of the story with the most comments? Give the exact "
+          "title string.",
+    "H10": "What are the _tags of the story whose objectID is 16582136? Answer as "
+           "an array of strings, in the order they appear.",
+    "H11": "What are the values of nbHits, hitsPerPage and page? Answer as a "
+           "three-element array in that order.",
+    "H12": "Summarize what the top 3 stories by points are about.",
+    "H13": "Which stories are about AI companies, and what happened in each?",
+}
