@@ -335,6 +335,20 @@ class Pacer:
 RETRY_DELAY = re.compile(r"retry in ([0-9.]+)s", re.I)
 
 
+class QuotaExhausted(RuntimeError):
+    """The account has no requests left, and waiting will not help.
+
+    Distinct from a passing rate limit because the remedy is different and the
+    cost of confusing them is the whole run. A per-minute ceiling is waited out;
+    a per-DAY ceiling is not, and this key's free tier is per-day (measured
+    2026-09-11 — a clean 90-second idle was still refused). Without this the
+    sweep would spend MAX_RATE_LIMIT_RETRIES x ~53s discovering the same thing
+    again for every one of the remaining questions, which is hours of waiting to
+    learn what the first one already established.
+    """
+
+
+
 def call(client, pacer, **kwargs):
     """One API call, paced, and retried when the server says to wait.
 
@@ -356,8 +370,10 @@ def call(client, pacer, **kwargs):
             print(f"    (rate limited; waiting {nap:.0f}s, "
                   f"attempt {attempt + 1}/{MAX_RATE_LIMIT_RETRIES})", flush=True)
             time.sleep(nap)
-    raise RuntimeError(
-        f"still rate limited after {MAX_RATE_LIMIT_RETRIES} attempts")
+    raise QuotaExhausted(
+        f"still refused after {MAX_RATE_LIMIT_RETRIES} attempts and "
+        f"~{MAX_RATE_LIMIT_RETRIES * 53}s of waiting — this is a quota that "
+        f"waiting does not clear")
 
 
 def ask(client, pacer, document_text, question, expected=None, tools=None):
@@ -381,6 +397,8 @@ def ask(client, pacer, document_text, question, expected=None, tools=None):
     record = {"question": question, "fetch_calls": [], "turns": 0}
     try:
         interaction = call(client, pacer, **kwargs)
+    except QuotaExhausted:
+        raise                                      # ends the sweep; see main()
     except Exception as exc:                       # noqa: BLE001 - reported, not raised
         record["error"] = f"{type(exc).__name__}: {exc}"
         return record
@@ -419,6 +437,8 @@ def ask(client, pacer, document_text, question, expected=None, tools=None):
             follow["response_format"] = graded_format(expected)
         try:
             interaction = call(client, pacer, **follow)
+        except QuotaExhausted:
+            raise
         except Exception as exc:                   # noqa: BLE001
             record["error"] = f"{type(exc).__name__}: {exc}"
             return record
@@ -502,7 +522,17 @@ def run_payload(client, pacer, sample_path, store_root, arms_wanted, do_judge, o
             if arms[arm]["identical_to"] else ""
         print(f"    {arm:11} {token_count(arms[arm]['text']):>7,} tokens{note}")
 
-    results = {"payload": name, "graded": [], "judged": []}
+    # Registered before a single question is asked, and mutated in place. A run
+    # that stops half way through a payload — quota, network, Ctrl-C — still has
+    # every answer it paid for in the file. Appending at the end would throw away
+    # the whole payload's work on the last question.
+    results = {"payload": name, "graded": [], "judged": [],
+               # Whether this payload's stored arm actually carries handles.
+               # Five of eight do not, and without this the "never called fetch"
+               # warning fires on them and reads as a defect when it is the
+               # correct outcome: there was nothing to fetch.
+               "stored_has_handles": arms["stored"]["doc_has_store"]}
+    out["payloads"].append(results)
 
     for label, fn, removed in graded:
         key = label.split()[0]
@@ -542,6 +572,17 @@ def run_payload(client, pacer, sample_path, store_root, arms_wanted, do_judge, o
         key = label.split()[0]
         if key not in ask_map:
             continue
+        if not do_judge:
+            # --no-judge skips ASKING these, not just scoring them. It used to
+            # ask all 16 and then decline to judge the answers, which read as
+            # thrift and was the opposite: the flag exists to save requests, and
+            # that spent ~32 of them per sweep to fill a column printed as "?".
+            # Banking answers for a later judge is a real idea, but it is not
+            # what a flag named --no-judge should quietly do, and on a
+            # quota-capped key it spends exactly the requests the graded half
+            # needs. Caught by watching a live run print "C9 ... raw:?" while
+            # the account was being rate limited.
+            continue
         row = {"label": label, "arms": {}}
         for arm in arms_wanted:
             twin = arms[arm]["identical_to"]
@@ -563,7 +604,6 @@ def run_payload(client, pacer, sample_path, store_root, arms_wanted, do_judge, o
         results["judged"].append(row)
         _print_row(label, row, arms_wanted, judged=True)
 
-    out["payloads"].append(results)
     return results
 
 
@@ -654,13 +694,22 @@ def summarise(out, arms_wanted):
               f"{'PASS' if j_ok else 'FAIL'}")
 
     if "stored" in arms_wanted:
-        # Rule 1's shape. An arm that answered without ever calling the tool is
-        # not measuring the store — it either had no handles or read around them,
-        # and either way the number it produced means something else.
+        # Rule 1's shape: assert the mechanism was used, not just that an answer
+        # appeared. But "no fetches" only means something went wrong if some
+        # payload in this run actually had handles to fetch — five of the eight
+        # carry no #store line at all, and on those a zero is the right answer.
+        # The first live run warned on a coingecko-only sweep, which was a false
+        # alarm dressed as a finding.
+        with_handles = [p["payload"] for p in out["payloads"]
+                        if p.get("stored_has_handles")]
         print(f"\n  the stored arm called fetch {fetch_calls} time(s)")
-        if not fetch_calls:
-            print("  WARNING: it never called fetch. Whatever this run measured, "
-                  "it was not retrieval.")
+        if not with_handles:
+            print("  (no payload in this run carries handles, so zero is correct "
+                  "— this run says nothing about retrieval either way)")
+        elif not fetch_calls:
+            print(f"  WARNING: {len(with_handles)} payload(s) carried handles "
+                  f"({', '.join(with_handles)}) and the model never fetched. "
+                  "Whatever this run measured, it was not retrieval.")
     print("\n" + ("THRESHOLDS NOT MET" if failed else "within the stated thresholds"))
     return 1 if failed else 0
 
@@ -708,6 +757,14 @@ def estimate(paths, arms_wanted, do_judge):
 
 
 def main():
+    # Declared up front because argparse reads ANSWER_MODEL for --model's default
+    # before the override below rebinds it. --model overrides the pinned constant
+    # for this process; the run file records what actually ran and whether it was
+    # the pinned model, because a run compared against a run by a different model
+    # is not a comparison, and that deviation belongs in the artefact rather than
+    # in somebody's shell history.
+    global ANSWER_MODEL
+
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--payload", action="append",
                         help="sample name or path; repeatable (default: all)")
@@ -718,7 +775,11 @@ def main():
     parser.add_argument("--dry-run", action="store_true",
                         help="build every prompt, make no calls, print the bill")
     parser.add_argument("--no-judge", action="store_true",
-                        help="skip the judged questions (they cost the Pro model)")
+                        help="do not ask or judge the 16 comprehension "
+                             "questions (saves the judge model and ~32 requests)")
+    parser.add_argument("--model", default=ANSWER_MODEL,
+                        help=f"model that answers (default {ANSWER_MODEL}); the "
+                             "run file records what actually ran")
     parser.add_argument("--rpm", type=int, default=DEFAULT_RPM,
                         help=f"requests per minute ceiling (default {DEFAULT_RPM}; "
                              "the free tier refuses the 21st in a rolling minute)")
@@ -768,6 +829,11 @@ def main():
               file=sys.stderr)
         return 2
 
+    if args.model != ANSWER_MODEL:
+        print(f"\nNOTE: answering with {args.model}, not the pinned "
+              f"{ANSWER_MODEL}. Recorded in the run file.")
+        ANSWER_MODEL = args.model
+
     client = genai.Client()
     pacer = Pacer(args.rpm)
     stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
@@ -776,6 +842,8 @@ def main():
         # Stamped, not assumed. A run is comparable only to another run by the
         # same pair, and the judge is a preview model that can move underneath us.
         "answer_model": ANSWER_MODEL,
+        "pinned_answer_model": parser.get_default("model"),
+        "answer_model_is_pinned": ANSWER_MODEL == parser.get_default("model"),
         "judge_model": JUDGE_MODEL if not args.no_judge else None,
         "arms": list(arms_wanted),
         "rpm": args.rpm,
@@ -798,6 +866,12 @@ def main():
             for path in paths:
                 run_payload(client, pacer, path, store_root, arms_wanted,
                             not args.no_judge, out)
+        except QuotaExhausted as exc:
+            # Stop the whole sweep rather than rediscovering this per question.
+            out["stopped_early"] = str(exc)
+            print(f"\nSTOPPED EARLY: {exc}")
+            print("Everything answered so far is in the run file below, and the "
+                  "summary that follows covers only what actually ran.")
         finally:
             # Written before grading and before any summary, so a sweep that
             # dies half way through has still bought something.
