@@ -87,7 +87,9 @@ here using the `*_url` convention — where it is the largest single contributor
   judge. `docs/status.md` has the rest, including what that leaves unproven.
 - **Readable by a model, not just by a parser.** The document explains its own
   encodings, and that claim is checked by giving it to a model with no access to
-  this repo — four times so far, scored in `docs/cold-reads.md`.
+  this repo — five times so far, scored in `docs/cold-reads.md`. The fifth put
+  the same questions to the raw payload as a control, and the compressed
+  document lost one answer out of 72.
 - **Every number measured, never copied.** Including from Headroom, whose
   thresholds would reject most of the results above (`docs/thresholds.md`).
 
@@ -106,6 +108,7 @@ here using the `*_url` convention — where it is the largest single contributor
 | `src/mcp_server.py` | the `fetch` tool — what makes Margin a tool the model calls |
 | `src/decompress.py` | the inverse |
 | `src/eval_harness.py` | asks the questions before and after |
+| `src/eval_model.py` | asks a *model* the questions — three arms, and not a gate |
 | `src/property_test.py` | generates payloads trying to break the format |
 | `src/cli_test.py` | runs the CLI as a subprocess and checks what it promises |
 | `src/mcp_test.py` | drives the MCP server as a subprocess over JSON-RPC |

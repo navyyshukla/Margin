@@ -34,9 +34,14 @@ traps the new element deserves — an encoding that reads plausibly as something
 else is the case worth constructing. Read #1's trap was decoding a `dints` array;
 read #3's was resolving a `#dict` index.
 
-**Record the result in a dated `docs/cold-read-YYYY-MM-DD.md`, and add one row to
+**Record the result in a dated `docs/cold-reads/YYYY-MM-DD.md`, and add one row to
 the table below.** The table is the single source of truth for the score —
 `harness.md` Rule 10 and the root `README.md` cite it rather than keeping copies.
+
+Read #5 adds a second way to run this, and `src/eval_model.py --emit` does the
+setup: it writes one self-contained task per payload and arm, carrying the
+document and the questions and nothing else — no ground truth, no repo path, not
+even which arm it is. That last exclusion matters as much as the others.
 
 ## The running score
 
@@ -46,19 +51,43 @@ the table below.** The table is the single source of truth for the score —
 | [2026-09-08b](cold-reads/2026-09-08b.md) | 16/16 | 7/10 | miscounted 13 positional columns; `json` used for a plainly numeric column; `#keyed"_key"` had no delimiter; the dotted-path convention was never stated |
 | [2026-09-09](cold-reads/2026-09-09.md) | **11/12** | 8/10 | could not verify an index 61 deep into an unmarked `#dict` array, and **miscounted 58 as 57**; the repeating header was never explained |
 | [2026-09-10](cold-reads/2026-09-10.md) | 12/12 | 8/10 | a `#dict` cell reads as a value, not a reference (`1` label vs key `1`) — the store's own handles were unambiguous |
+| [2026-09-11](cold-reads/2026-09-11.md) | **71/72** compressed, 69/72 stored, **72/72 raw** | not asked | `#keyed`'s synthetic `_key` column is reported as if it were a field of the record |
 
-## What four reads have established
+## Read #5 is a different instrument, and the table above flattens that
+
+Reads #1–#4 are one reader thinking aloud, scoring its own confidence and saying
+what was ambiguous. Read #5 is `src/eval_model.py`: 17 readers, one per payload
+**and arm**, graded automatically against ground truth computed from the raw
+payload.
+
+It gains the thing no earlier read had — **a control arm.** The same questions
+went to the uncompressed payload, so "the reader got it wrong" and "compression
+cost the answer" are finally separable; that is how read #5's two stored misses
+were shown to be arithmetic rather than data loss.
+
+It loses the confidence score and the "say what was ambiguous" prompt, which are
+what actually found the defects in #1–#4. **It does not replace them.** A new
+header line or cell encoding still owes a read of the #1–#4 kind; read #5's kind
+answers "did an answer move", which is a different question.
+
+## What five reads have established
 
 **Every read has found a real defect no automated gate could have seen**, and
-confidence has risen every time while the same weakness kept surfacing somewhere
-new — which is the argument for running this on every format change rather than
+confidence rose every time while the same weakness kept surfacing somewhere new —
+which is the argument for running this on every format change rather than
 trusting a good score.
 
-**The weakness is counting.** All four reads have leaned on it. Reads #1 and #2 caught
-themselves by recounting; read #3 could not verify an index 61 entries into an
-unmarked array and, on the very next question, miscounted 58 as 57. "Caught by
-recounting" is luck about how careful the reader was, not a property of the
-format.
+**The weakness is counting.** All five reads have leaned on it. Reads #1 and #2
+caught themselves by recounting; read #3 could not verify an index 61 entries
+into an unmarked array and, on the very next question, miscounted 58 as 57.
+"Caught by recounting" is luck about how careful the reader was, not a property
+of the format.
+
+Read #5 is the first one able to prove that diagnosis rather than assert it. Its
+two stored-arm misses were both miscounts — and because it had a control arm
+reading the *same* column in a different document, they could be shown to be the
+reader rather than the format. Four reads suspected counting; the fifth
+demonstrated it.
 
 So the format has now paid twice to remove counting, deliberately:
 
@@ -86,12 +115,19 @@ legend alone, having never been told the tool exists.
 
 ## The next read
 
-Owed when the next format line or cell encoding is added. Two things to watch,
-both recorded in read #4 and deliberately not fixed:
+Owed when the next format line or cell encoding is added — and one is already
+queued: **`_key`**, which read #5 showed is reported as a field of the record.
+The candidate fix is one clause in the legend, and per the `harness` skill a
+legibility change owes a read plus a re-measure.
+
+Three things to watch, the first two recorded in read #4 and deliberately not
+fixed, the third from read #5:
 
 - **A `#dict` cell reads as a value.** `1` in a `labels:dict` column means "key 1
   on the `#dict` line" and sits beside columns where a small integer is genuinely
-  a count. No answer in four reads has been wrong because of it; the read that
+  a count. No answer in five reads has been wrong because of it; the read that
   gets one wrong is the one that buys the fix.
-- **Counting.** Every read has leaned on it. This one leaned hardest and held,
-  but it is still what the reader is least sure of.
+- **Counting.** Every read has leaned on it. Read #4 leaned hardest and held;
+  read #5 finally caught it failing, twice, with a control arm to prove it was
+  the reader and not the document.
+- **`_key` as data.** Read #5's finding, above. Unfixed.
