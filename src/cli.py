@@ -43,6 +43,7 @@ import sys
 
 import render
 import store as store_module
+import store_commands
 from compress import compress_json, token_count
 from detect import detect_content_type
 
@@ -175,6 +176,32 @@ def main(argv=None):
     ourselves, and print() would append newlines to output that must not have
     them."""
     argv = sys.argv[1:] if argv is None else argv
+
+    # Subcommands, checked before anything else treats a word as a path.
+    #
+    # `margin f.json` is byte-identical to what it always was, which is the
+    # constraint this dispatch is written around: the everyday pipeline is what
+    # the whole CLI is shaped for, and it does not get slower or stranger so
+    # that four maintenance commands can exist.
+    #
+    # The cost, and docs/cli.md states it: a file literally named `export` is now
+    # ambiguous. `margin ./export` and `margin < export` both still work, and
+    # neither of the four names is a plausible payload filename.
+    #
+    # Argv still enters here and nowhere else — store_commands.py never reads
+    # sys.argv, it is handed a list.
+    if argv and argv[0] in store_commands.COMMANDS:
+        try:
+            return store_commands.run(argv[0], argv[1:])
+        except BrokenPipeError:
+            raise
+        except Exception as exc:                       # noqa: BLE001
+            # Same promise as the compress path: a subcommand reports what broke
+            # on stderr rather than printing a traceback over the user's
+            # terminal. 1, not 2 — it was called correctly and failed.
+            print(f"margin: {argv[0]} failed ({type(exc).__name__}: {exc})",
+                  file=sys.stderr)
+            return 1
 
     def note(message):
         if not quiet:

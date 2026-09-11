@@ -196,6 +196,15 @@ class MemoryStore:
             raise KeyError(doc_id)
         return dict(self.indexes[doc_id])
 
+    def document_ids(self):
+        return sorted(self.indexes)
+
+    def object_names(self):
+        return sorted(self.objects)
+
+    def delete_object(self, name):
+        return self.objects.pop(name, None) is not None
+
 
 class FileStore:
     """The same store, under a directory.
@@ -218,6 +227,50 @@ class FileStore:
 
     def _index_path(self, doc_id):
         return os.path.join(self.root, "docs", doc_id + ".json")
+
+    # Enumeration and deletion. Added 2026-09-12 for `margin gc` and `margin
+    # fsck`, and added to BOTH stores rather than only this one, because Rule 15
+    # exists precisely because every store check once ran on MemoryStore while
+    # FileStore was the thing that shipped.
+    #
+    # They are methods rather than a command reaching into `self.root` for the
+    # same reason `get` re-hashes: the store owns what "every object" and "every
+    # document" mean, and a caller that walks the directory itself is a second
+    # definition of the layout, free to drift from this one.
+
+    def document_ids(self):
+        """Every document this store holds an index for.
+
+        GC marks from here, not from a document someone happens to have: dedup
+        is a CROSS-document property (docs/store.md), so an object still
+        referenced by another document's index must survive. Marking from one
+        document is the failure mode, not the design.
+        """
+        docs = os.path.join(self.root, "docs")
+        if not os.path.isdir(docs):
+            return []
+        return sorted(name[:-5] for name in os.listdir(docs)
+                      if name.endswith(".json"))
+
+    def object_names(self):
+        objects = os.path.join(self.root, "objects")
+        if not os.path.isdir(objects):
+            return []
+        return sorted(name for name in os.listdir(objects)
+                      if not name.startswith("."))
+
+    def delete_object(self, name):
+        """Remove one object. True if it was there.
+
+        The only destructive operation in this project. It takes a name rather
+        than a predicate deliberately — deciding what to delete belongs to the
+        caller that did the marking, so this cannot sweep anything on its own.
+        """
+        try:
+            os.remove(self._object_path(name))
+            return True
+        except FileNotFoundError:
+            return False
 
     # Objects are read and written as BYTES, never in text mode.
     #
@@ -473,3 +526,125 @@ def orphaned_ids(index, used_ids):
     shape — and it is how a store silently grows forever.
     """
     return sorted(set(index) - set(used_ids))
+
+
+# --- operability: what a store needs to be recoverable -------------------
+#
+# docs/store.md carried these as "Not built, and said out loud" from the day the
+# store shipped: no bundle unit, and no way to find an object no index points at.
+# Both are about the store being *survivable* rather than about compression, and
+# neither is reachable by any other means — which is the argument that got them
+# past the scope rule that kept `--decompress` out of the CLI.
+
+
+def reachable_objects(store):
+    """Every object name some index references. The mark set for a sweep.
+
+    Marks from EVERY document, not from one: dedup is a cross-document property
+    (docs/store.md), so an object this document no longer uses may still be the
+    only copy another document has. Marking from one index is not a smaller
+    version of this — it is the bug.
+    """
+    reachable = set()
+    for doc_id in store.document_ids():
+        reachable.update(store.read_index(doc_id).values())
+    return reachable
+
+
+def leaked_objects(store):
+    """Objects no index points at. Sorted, so a caller can name them.
+
+    The failure docs/store.md names: "with the index rather than hashes in the
+    document, garbage collection must mark from docs/, so a lost index leaks
+    objects forever."
+    """
+    return sorted(set(store.object_names()) - reachable_objects(store))
+
+
+def broken_objects(store):
+    """Objects an index points at that are absent, or no longer hash to their
+    own name.
+
+    `get` already re-hashes what it reads, so corruption is a ValueError and
+    needs no second integrity path here — Rule 4, one notion of what an object
+    being intact means.
+    """
+    broken = []
+    for doc_id in store.document_ids():
+        for cell_id, name in sorted(store.read_index(doc_id).items()):
+            try:
+                store.get(name)
+            except KeyError:
+                broken.append((doc_id, cell_id, name, "missing"))
+            except ValueError:
+                broken.append((doc_id, cell_id, name, "content changed"))
+    return broken
+
+
+def read_index_values(store, doc_id):
+    """The object names one document's index references. A convenience for
+    callers that want the content rather than the id mapping."""
+    return list(store.read_index(doc_id).values())
+
+
+def sweep(store, names):
+    """Delete these objects. Returns how many were actually there.
+
+    Takes names rather than deciding anything: the caller does the marking, so
+    this cannot sweep on its own and a mistake in `reachable_objects` cannot be
+    hidden behind a convenience.
+    """
+    return sum(1 for name in names if store.delete_object(name))
+
+
+def bundle(store, doc_id, document=None):
+    """One document's index and every object it needs, as a plain dict.
+
+    A JSON bundle rather than an archive: objects are UTF-8 text by construction
+    — `stash_bulk_cells` stores `render.encode_cell` output — so the whole thing
+    is readable and diffable, and there is no tar handling to get wrong.
+
+    Raises if anything it would reference is missing, so a broken bundle is
+    never written. A bundle that resolves on the machine that made it and
+    nowhere else would be worse than not having the command.
+    """
+    index = store.read_index(doc_id)
+    broken = missing_handles(index, store)
+    if broken:
+        raise KeyError(
+            f"cannot export {doc_id}: {len(broken)} handle(s) have no content "
+            f"in this store ({', '.join(broken[:5])}) — run fsck")
+    out = {"margin_bundle": 1, "doc_id": doc_id, "index": dict(index),
+           "objects": {name: store.get(name) for name in sorted(set(index.values()))}}
+    if document is not None:
+        out["document"] = document
+    return out
+
+
+def unbundle(store, payload):
+    """Write a bundle into this store. Returns (doc_id, objects written).
+
+    Goes through `commit`, never a hand-rolled put + write_index, so it inherits
+    the collision refusal: an object already present under the same name with
+    different bytes raises rather than being overwritten (Rule 14). Re-importing
+    the same bundle is a no-op by content addressing, not by a check here.
+    """
+    if payload.get("margin_bundle") != 1:
+        raise ValueError("not a margin bundle")
+    doc_id = payload["doc_id"]
+    objects = payload["objects"]
+    by_hash = {name: objects[name] for name in sorted(objects)}
+
+    # Verify before writing anything: every id the index names must have content
+    # in the bundle, and every object must hash to the name it arrived under.
+    for cell_id, name in sorted(payload["index"].items()):
+        if name not in by_hash:
+            raise KeyError(f"bundle is incomplete: {cell_id} -> {name} has no content")
+    for name, text in by_hash.items():
+        if content_hash(text) != name:
+            raise ValueError(f"{name} does not hash to its own name — bundle corrupt")
+
+    pending = {cell_id: by_hash[name]
+               for cell_id, name in payload["index"].items()}
+    commit(store, doc_id, pending)
+    return doc_id, len(by_hash)

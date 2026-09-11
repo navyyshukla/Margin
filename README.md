@@ -7,7 +7,9 @@ a small tool that shrinks the JSON API responses I paste into LLM conversations,
 the answers I get back. Built as a learning project — rule-based first, reversible always, one
 feature at a time. See `CLAUDE.md` for the current architecture and decisions.
 
-**Status:** the JSON compressor works and is tested against eight different APIs.
+**Status: finished** (2026-09-12) — the scope in `CLAUDE.md` is met and measured;
+`docs/status.md` says what is done, what stays open and what was declined.
+The JSON compressor works and is tested against eight different APIs.
 **41.6% overall**, and nothing ever comes out larger than it went in. With
 `--store` and the MCP server, **73.7%** — bulk values move to a content store the
 model fetches from, and `docs/store.md` explains what that costs as well as what
@@ -22,6 +24,11 @@ ln -s "$PWD/bin/margin" ~/.local/bin/margin           # once per machine
 curl -s https://api.github.com/repos/python/cpython/issues | margin | pbcopy
 margin response.json > compressed.txt
 ```
+
+With `--store` in use, four subcommands keep that store recoverable — `margin
+fsck`, `margin gc`, `margin export <doc-id> <file>`, `margin import <file>`.
+See `docs/cli.md` for why these earned a place the narrow CLI refused
+`--decompress`.
 
 Reads a file or stdin. The document goes to stdout and everything else to
 stderr, so it drops into a pipeline without putting notes on your clipboard.
@@ -112,6 +119,7 @@ here using the `*_url` convention — where it is the largest single contributor
 | `src/render.py` | writes the document and reads it back, in one file so the two cannot drift |
 | `src/store.py` | the content store: bulk cells live here, not in the prompt |
 | `src/mcp_server.py` | the `fetch` tool — what makes Margin a tool the model calls |
+| `src/store_commands.py` | `fsck`, `gc`, `export`, `import` — what keeps the store recoverable |
 | `src/decompress.py` | the inverse |
 | `src/eval_harness.py` | asks the questions before and after |
 | `src/eval_model.py` | asks a *model* the questions — three arms, and not a gate |

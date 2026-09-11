@@ -25,6 +25,7 @@ Usage: python src/property_test.py [trials]
 """
 
 import json
+import os
 import random
 import sys
 import tempfile
@@ -446,6 +447,140 @@ def detects_a_broken_store():
             and not store.orphaned_ids(index, store.used_ids(table)))
 
 
+def bundle_survives_a_different_store():
+    """Export a document, import it into an empty store, decompress it there.
+
+    The gap `docs/store.md` named from the day the store shipped — "a document is
+    meaningless without its index and objects, and there is no bundle unit" — so
+    the check is the whole point of the feature and not a property of it: the
+    second store has never seen the payload, and the document has to come back.
+
+    On real FileStores in real directories, never MemoryStore. Rule 15: every
+    store check once ran on the convenient implementation while the one that
+    ships had no coverage at all, and a bundle is a file by definition.
+    """
+    with tempfile.TemporaryDirectory() as first_root, \
+            tempfile.TemporaryDirectory() as second_root:
+        first = store.FileStore(first_root)
+        payload = bulky()
+        text, _ = compress_json(payload, store=first)
+        if not text.startswith(FORMAT_MARKER):
+            return False
+        table = render.parse(text)
+        doc_id = table.get("store")
+        if not doc_id:
+            return False
+
+        # Everything after the fixture is inside the guard, and that is not
+        # defensive habit — the mutation `import writes the objects and never the
+        # index` made `unbundle` leave no index behind, `decompress` raised
+        # looking for it, and this function EXPLODED instead of returning False.
+        # A crashed gate reports no failure line at all, so the mutation suite
+        # read it as "nothing noticed" and called the hole a survivor. Exactly
+        # the trap detects_a_broken_store records one screen above.
+        try:
+            packed = store.bundle(first, doc_id)
+            if len(packed["objects"]) != len(set(
+                    store.read_index_values(first, doc_id))):
+                return False
+
+            # The bundle goes through JSON, because that is how it travels.
+            second = store.FileStore(second_root)
+            restored_id, _ = store.unbundle(second, json.loads(json.dumps(packed)))
+            if restored_id != doc_id:
+                return False
+
+            # The real claim: a store that has never seen this payload resolves it.
+            return same_json(decompress(text, store=second),
+                             strip_boilerplate(payload))
+        except Exception:                              # noqa: BLE001
+            return False
+
+
+def detects_a_leaked_object():
+    """Show the leak detector a leak, and the sweep a thing to sweep.
+
+    `leaked_objects` and `sweep` are `margin gc`, and Rule 14 is explicit that a
+    detector nobody has shown a positive to is not a detector — which is exactly
+    how `missing_handles` and `orphaned_ids` shipped vacuous and survived the
+    mutation suite.
+
+    The leak is built the way it actually happens and the way docs/store.md
+    predicted: the index is deleted and the objects it named are left behind.
+    """
+    with tempfile.TemporaryDirectory() as root:
+        backing = store.FileStore(root)
+
+        # TWO documents, and that is load bearing. With one, marking from "every
+        # index" and marking from "the first index" are the same thing, and the
+        # mutation `gc marks from one index instead of every index in docs/`
+        # survived this check when it held a single document — the cross-document
+        # property docs/store.md calls the whole point of GC was untested by the
+        # test written for it.
+        first, _ = compress_json(bulky(), store=backing)
+        second, _ = compress_json(bulky(prefix="other"), store=backing)
+        if not first.startswith(FORMAT_MARKER) or not second.startswith(FORMAT_MARKER):
+            return False
+        first_id = render.parse(first).get("store")
+        second_id = render.parse(second).get("store")
+        if not first_id or not second_id or first_id == second_id:
+            return False
+
+        objects = backing.object_names()
+        if not objects or len(backing.document_ids()) != 2:
+            return False
+
+        # Intact: nothing is leaked. A detector that marks from only one index
+        # reports the other document's objects as garbage, and fails here.
+        if store.leaked_objects(backing):
+            return False
+
+        # Lose one index — the exact failure docs/store.md names. Only that
+        # document's objects leak; the other document's must survive.
+        doomed = set(store.read_index_values(backing, first_id))
+        survives = set(store.read_index_values(backing, second_id))
+        os.remove(os.path.join(root, "docs", first_id + ".json"))
+        leaked = set(store.leaked_objects(backing))
+        if leaked != doomed - survives:
+            return False
+
+        # And the sweep removes precisely those, reporting how many were there.
+        if store.sweep(backing, sorted(leaked)) != len(leaked):
+            return False
+        return set(backing.object_names()) == survives
+
+
+def detects_content_that_changed_under_it():
+    """Show `broken_objects` an object whose bytes no longer match its name.
+
+    `margin fsck`'s other half, and the one that is data loss rather than disk.
+    Written by corrupting a file on disk, because that is the only way this
+    happens — `put` refuses to write a conflicting object, so nothing inside the
+    library can produce it.
+    """
+    with tempfile.TemporaryDirectory() as root:
+        backing = store.FileStore(root)
+        text, _ = compress_json(bulky(), store=backing)
+        if not text.startswith(FORMAT_MARKER):
+            return False
+        if store.broken_objects(backing):
+            return False
+
+        victim = backing.object_names()[0]
+        with open(os.path.join(root, "objects", victim), "wb") as handle:
+            handle.write(b"not what this name promises")
+        broken = store.broken_objects(backing)
+        if len(broken) != 1 or broken[0][2] != victim:
+            return False
+        if broken[0][3] != "content changed":
+            return False
+
+        # Removing it entirely is the other fault, and must read differently.
+        os.remove(os.path.join(root, "objects", victim))
+        broken = store.broken_objects(backing)
+        return len(broken) == 1 and broken[0][3] == "missing"
+
+
 def abandoning_a_document_leaves_the_store_clean():
     """Stash cells, then discard the document, and write nothing.
 
@@ -585,9 +720,14 @@ _BULK = ("A body long enough that moving it out of the document beats leaving "
 # mistake _PAD above exists to record for #dict.
 
 
-def bulky(rows=8):
-    """Rows with one cell well over the storing bar, and one well under."""
-    return [{"i": index, "small": "x", "body": f"{_BULK} row {index}"}
+def bulky(rows=8, prefix=""):
+    """Rows with one cell well over the storing bar, and one well under.
+
+    `prefix` makes a SECOND, different document out of the same shape — needed
+    by detects_a_leaked_object, where one document cannot tell "mark from every
+    index" apart from "mark from the first index".
+    """
+    return [{"i": index, "small": "x", "body": f"{prefix}{_BULK} row {index}"}
             for index in range(rows)]
 
 
@@ -975,6 +1115,17 @@ def main():
 
     if not detects_a_broken_store():
         failures.append(("STORE (the completeness detectors do not detect)", 0, []))
+
+    # The operability trio. Each is a detector or an inverse that normal
+    # operation never exercises, so each gets a hand-built positive (Rule 14).
+    if not bundle_survives_a_different_store():
+        failures.append(("STORE (a bundle does not resolve in another store)", 0, []))
+
+    if not detects_a_leaked_object():
+        failures.append(("STORE (the leak detector does not detect, or gc does not sweep)", 0, []))
+
+    if not detects_content_that_changed_under_it():
+        failures.append(("STORE (fsck does not notice content that changed)", 0, []))
 
     if not abandoning_a_document_leaves_the_store_clean():
         failures.append(("STORE (abandoned document left content behind)", 0, []))

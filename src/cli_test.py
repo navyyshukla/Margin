@@ -92,6 +92,15 @@ COMPACT = (",", ":")
 TABULATES = json.dumps(repeated(["kept", "together"], ["and", "apart"], rows=40),
                        separators=COMPACT)
 
+# Cells long enough to clear MIN_STORE_SAVING, so `--store` actually stashes
+# something. Generated here rather than read from data/samples/, which is
+# gitignored and absent from the tree pre-commit builds — the same reason every
+# other fixture in this file is generated.
+BULKY = json.dumps(
+    [{"id": index, "body": f"paragraph {index} " + "prose about the thing " * 12}
+     for index in range(12)],
+    separators=COMPACT)
+
 # Compresses to nothing: no record array anywhere, so no table is possible, and
 # compress_json hands the input straight back. This is Open-Meteo's shape in
 # miniature and it is the case a do-nothing CLI passes by accident.
@@ -416,6 +425,105 @@ def main():
             check("bin/margin: works through a symlink from another directory",
                   done.returncode == 0 and done.stdout == out,
                   f"exit={done.returncode} stderr={done.stderr[-200:]!r}")
+
+    # --- the store subcommands ------------------------------------------
+    #
+    # As subprocesses, like everything else here (Rule 11): argv, exit codes and
+    # a real store on disk only exist at the process boundary, and these four
+    # commands are nothing BUT argv, exit codes and a store on disk.
+    #
+    # Each runs against its own $MARGIN_STORE in a temp directory. A test that
+    # swept ~/.margin would be a test that deletes the user's data the first
+    # time it is wrong.
+    with tempfile.TemporaryDirectory() as store_root, \
+            tempfile.TemporaryDirectory() as other_root:
+        env = dict(os.environ, MARGIN_STORE=store_root)
+        done = subprocess.run([sys.executable, CLI, "--store", "-"],
+                              input=BULKY.encode(), env=env,
+                              capture_output=True, check=False)
+        document = done.stdout.decode()
+
+        # Rule 1, first: if the fixture did not actually store anything, every
+        # check below passes against an empty store and proves nothing.
+        stored_line = [l for l in document.split("\n") if l.startswith("#store")]
+        objects_dir = os.path.join(store_root, "objects")
+        n_objects = len(os.listdir(objects_dir)) if os.path.isdir(objects_dir) else 0
+        check("fixture: --store really wrote objects and a #store line",
+              bool(stored_line) and n_objects > 0,
+              f"#store={stored_line} objects={n_objects}")
+        if not stored_line or not n_objects:
+            print("  (the store subcommand checks below would be testing an "
+                  "empty store — skipping them would hide that, so they run "
+                  "and will fail)")
+
+        doc_id = stored_line[0][len("#store"):].strip().strip('"') if stored_line else ""
+
+        done = subprocess.run([sys.executable, CLI, "fsck"], env=env,
+                              capture_output=True, check=False)
+        check("fsck: a healthy store exits 0 and says clean",
+              done.returncode == 0 and b"clean" in done.stdout,
+              f"exit={done.returncode} out={done.stdout[-120:]!r}")
+
+        # The quoted form is what a document actually shows, so it is what a
+        # caller copies. mcp_server learned this one the same way.
+        bundle_path = os.path.join(other_root, "bundle.json")
+        done = subprocess.run([sys.executable, CLI, "export",
+                               f'"{doc_id}"', bundle_path],
+                              env=env, capture_output=True, check=False)
+        check("export: accepts the doc id with the quotes the #store line shows",
+              done.returncode == 0 and os.path.exists(bundle_path),
+              f"exit={done.returncode} stderr={done.stderr[-160:]!r}")
+
+        check("export: the bundle carries the objects, not just the index",
+              os.path.exists(bundle_path)
+              and len(json.loads(open(bundle_path, encoding="utf-8")
+                                 .read())["objects"]) == n_objects,
+              "bundle objects != store objects")
+
+        # The whole point of the feature: another store, which has never seen
+        # this payload, resolves the document.
+        second = dict(os.environ, MARGIN_STORE=os.path.join(other_root, "store"))
+        done = subprocess.run([sys.executable, CLI, "import", bundle_path],
+                              env=second, capture_output=True, check=False)
+        check("import: a fresh store takes the bundle",
+              done.returncode == 0 and doc_id.encode() in done.stdout,
+              f"exit={done.returncode} stderr={done.stderr[-160:]!r}")
+
+        done = subprocess.run([sys.executable, CLI, "fsck"], env=second,
+                              capture_output=True, check=False)
+        check("import: and the imported store is clean",
+              done.returncode == 0 and b"clean" in done.stdout,
+              f"exit={done.returncode} out={done.stdout[-120:]!r}")
+
+        # gc, and the reason it is dry by default: this is the only command in
+        # the project that destroys anything.
+        os.remove(os.path.join(store_root, "docs", doc_id + ".json"))
+        done = subprocess.run([sys.executable, CLI, "gc"], env=env,
+                              capture_output=True, check=False)
+        after_dry = len(os.listdir(objects_dir))
+        check("gc: without --delete it removes nothing and says so",
+              done.returncode == 0 and b"nothing was deleted" in done.stdout
+              and after_dry == n_objects,
+              f"exit={done.returncode} objects {n_objects}->{after_dry}")
+
+        done = subprocess.run([sys.executable, CLI, "gc", "--delete"], env=env,
+                              capture_output=True, check=False)
+        check("gc --delete: sweeps exactly the unreferenced objects",
+              done.returncode == 0 and len(os.listdir(objects_dir)) == 0,
+              f"exit={done.returncode} left={len(os.listdir(objects_dir))}")
+
+        done = subprocess.run([sys.executable, CLI, "export", "nosuchdoc",
+                               os.path.join(other_root, "x.json")],
+                              env=env, capture_output=True, check=False)
+        check("export: an unknown document fails loudly, with no traceback",
+              done.returncode == 1 and b"Traceback" not in done.stderr
+              and done.stderr.strip().startswith(b"margin:"),
+              f"exit={done.returncode} stderr={done.stderr[-160:]!r}")
+
+        done = subprocess.run([sys.executable, CLI, "fsck", "extra"], env=env,
+                              capture_output=True, check=False)
+        check("a subcommand called wrong exits 2, like the rest of the CLI",
+              done.returncode == 2, f"exit={done.returncode}")
 
     print()
     if failures:

@@ -234,8 +234,75 @@ statement in `docs/cold-reads/2026-09-12-judge.md`.
 **It does not offset the graded failure.** The stored arm is still 73/75 and the
 run still says `THRESHOLDS NOT MET`.
 
-- [ ] **Deferred, and named rather than forgotten:** `margin export`/`import`
-      (a document is meaningless without its index and objects, and there is no
-      bundle unit); GC and `fsck` (a lost index leaks objects forever);
-      Headroom's TTL and retrieval counts; Parquet-style per-column statistics so
-      a reader can skip fetches entirely. All in `docs/store.md`.
+## PR #11 — the store becomes recoverable, and that is the last of it (2026-09-12)
+
+The two gaps `docs/store.md` had named since the store shipped, and the reason
+they beat the scope rule that kept `--decompress` out of the CLI: a
+`--decompress` flag is a convenience for something `python src/decompress.py`
+already does, while **a store with no `fsck` and no bundle unit is unrecoverable
+by any other means.**
+
+- [x] **Four subcommands.** `margin fsck` (every index against the objects it
+      names), `margin gc [--delete]` (objects nothing references, **dry run by
+      default** — the only irreversible thing here), `margin export <doc-id>
+      <file>` and `margin import <file>`. `margin f.json` is byte-identical to
+      what it was; the dispatch happens before anything treats a word as a path,
+      and `docs/cli.md` states the cost — a file literally named `export` is now
+      ambiguous.
+
+- [x] **The one surface the store lacked: enumeration and deletion**, on
+      `MemoryStore` and `FileStore` both (Rule 15). Everything else reuses what
+      was already there — `missing_handles`, `orphaned_ids`, `commit`, and
+      `get`'s existing re-hash, which is why `fsck` needed no new integrity code.
+
+- [x] **Verified end to end**, not just in unit checks: a document compressed
+      with `--store`, exported, imported into a second empty store, and
+      decompressed there — 30 records, bodies intact. Then the failure
+      `docs/store.md` predicted: delete the index, `fsck` reports 32 leaked
+      objects, `gc` lists them, `gc --delete` sweeps them, `fsck` says clean.
+
+- [x] **Mutation coverage 25 → 31**, and **two of the six survived the first
+      time** — the useful part. "gc marks from one index instead of every index
+      in `docs/`" survived because the check written for it held a *single*
+      document, so marking from one index and from all of them were the same
+      thing; the cross-document property that is the whole point of GC was
+      untested by its own test. And "import writes the objects and never the
+      index" made the check *explode* rather than fail, and a crashed gate
+      reports no failure line — the exact trap `detects_a_broken_store` records
+      one screen above where it happened.
+
+- [x] **Declined on the record rather than left pending:** Headroom's TTL and
+      retrieval counts (a policy for a store under memory pressure; `gc` now
+      bounds growth for the one this is) and Parquet-style per-column statistics
+      (promising and entirely unmeasured, which is the project's standing bar —
+      the same call `graphql_countries.emoji` got).
+
+## Done (2026-09-12)
+
+**The project is finished.** Not "no ideas left" — the scope CLAUDE.md set is
+met and measured:
+
+| | |
+|---|---|
+| compression | **41.6%** across eight APIs, worst case 0.0% |
+| with the store | **73.7%**, and the store is now recoverable |
+| answers, graded | raw 75/75, compressed **75/75**, stored 73/75 |
+| answers, judged | **16/16** on every arm, behind a judge gated by controls |
+| the harness | 8 gates, 80 checks, 31 mutations, all caught |
+| cold reads | 8, every one of the first five finding a defect no gate could see |
+
+**Two things are open and neither is work anyone is waiting on:**
+
+1. **The stored arm fails its own bar, 73/75, and it has been left red across
+   three PRs.** The cause is narrowed, not fixed: not the document, not `[Nt]`,
+   not task size, and not "counting" — a reader that has fetched sometimes
+   misreads a row (`docs/cold-reads/2026-09-12-miscount.md`). 1 miss in 5 is a
+   suspect, not a rate. Widening `GRADED_ALLOWED_GAP` to make the run green is
+   the one thing that would make all of this worthless, and it has not been done.
+2. **The judge shares a model family with the answerer.** The controls show it
+   can say "different"; they do not show it free of a shared prior. An
+   independent judge would be the stronger instrument and would cost money.
+
+Everything else was declined in writing, with a reason, at the time:
+`graphql_countries.emoji`, `--decompress`, multiple files and `-o`, a TTY check
+on the summary line, TTL and retrieval counts, per-column statistics.

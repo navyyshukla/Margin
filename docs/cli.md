@@ -32,6 +32,9 @@ costs ten lines and touches no import.
 margin f.json          margin < f.json          curl ... | margin
 margin -               margin -q f.json         margin --help
 margin --store f.json
+
+margin fsck                      margin gc [--delete]
+margin export <doc-id> <file>    margin import <file>
 ```
 
 `--store` moves bulk cells out of the document and into a content store, taking
@@ -154,10 +157,51 @@ tiktoken cache, that means fetching a BPE vocabulary over the network to print a
 constant, so a failed curl on a fresh laptop would traceback instead of passing
 through.
 
+## The four store subcommands, and why they are not the same call as `--decompress`
+
+Added 2026-09-12, and they have to answer the scope rule that kept
+`--decompress` out one section down. The answer is not "these are more useful".
+
+**`--decompress` is a convenience for something another entry point already
+does.** `python src/decompress.py f.txt` is right there. Nothing is lost by
+refusing it but a few keystrokes.
+
+**A store with no `fsck` and no bundle unit is unrecoverable by any other
+means.** There is no second way to find an object no index points at — the leak
+`docs/store.md` has named since the store shipped — and no second way to move a
+document to another machine with the content it needs. Refusing these does not
+cost keystrokes; it costs the data.
+
+| | |
+|---|---|
+| `margin fsck` | every index against the objects it names. Exit 1 if content a document needs is gone, 0 if the only finding is disk |
+| `margin gc [--delete]` | objects no index references. **Dry run by default** |
+| `margin export <doc-id> <file>` | one document's index and objects, as a JSON bundle |
+| `margin import <file>` | a bundle into this store, through `commit`, so a conflicting object still refuses |
+
+**`gc` is the only irreversible thing in this project**, so it does nothing by
+default and prints what it would remove. CLAUDE.md's first decision is that
+originals are kept and never delete-and-hope; a sweep that ran on sight would be
+exactly that.
+
+**The cost of subcommands, stated rather than discovered.** `parse_args` treats
+every bare word as a path, so dispatching on the first word makes a file literally
+named `export` ambiguous. `margin ./export` and `margin < export` both still
+work, and none of the four names is a plausible payload filename — but the
+ambiguity is real and this is where it is written down. `margin f.json` is
+byte-identical to what it always was; the dispatch happens before anything else
+looks at argv.
+
+The bundle is **one JSON file**, not an archive: stored objects are UTF-8 text by
+construction, so a bundle is readable and diffable and there is no tar handling
+to get wrong. It is not a `#margin/v1` format element — no new header line, no
+new cell encoding — so per `docs/cold-reads.md` it owes no cold read.
+
 ## Deliberately not built
 
 - **`--decompress`.** One flag away and the tool's own inverse, but scope says
-  one job; `python src/decompress.py f.txt` covers the rare occasion.
+  one job; `python src/decompress.py f.txt` covers the rare occasion. The four
+  subcommands above are not a reversal of this — see the section that answers it.
 - **Multiple files, `-o`.** `>` and `|` already do both.
 - **A TTY check on the summary line.** Printing stats only when stderr is a
   terminal is tempting and is the same shape as the `jq` bug in

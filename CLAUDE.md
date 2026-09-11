@@ -52,9 +52,9 @@ degrading answer quality on a fixed set of test questions. Inspired by Headroom
 
 - `bin/margin` — the entry point; symlink it into `~/.local/bin` once (see `docs/cli.md`)
 - `src/` — flat, one file per concern. Nine files are the product (the pipeline, `cli.py`,
-  `mcp_server.py`); the other seventeen are the harness that guards it — the gates, the eval
-  harness and its per-payload `checks_*.py`, the model-in-the-loop eval, and three measurement
-  scripts. Deliberately not
+  `mcp_server.py`, `store_commands.py`); the other seventeen are the harness that guards it —
+  the gates, the eval harness and its per-payload `checks_*.py`, the model-in-the-loop eval,
+  and three measurement scripts. Deliberately not
   split into `src/` + `tests/`: every benefit of that split is a *packaging* benefit and
   nothing here is packaged, while the move would rewrite ten harness files — and a mutation
   tester that stops finding its targets fails green
@@ -64,12 +64,13 @@ degrading answer quality on a fixed set of test questions. Inspired by Headroom
 
 ## Harness
 
-Seven gates: `src/property_test.py`, `src/cli_test.py`, `src/mcp_test.py`, `src/mutation_test.py`,
-`src/eval_harness.py`, the `.claude/hooks/run_eval.sh` PostToolUse hook, and `.githooks/pre-commit`. What each asks, and
+Eight gates: `src/property_test.py`, `src/cli_test.py`, `src/mcp_test.py`, `src/mutation_test.py`,
+`src/eval_harness.py`, `src/eval_model.py --self-test`, the `.claude/hooks/run_eval.sh` PostToolUse
+hook, and `.githooks/pre-commit`. What each asks, and
 what you owe before changing the format, is in the `harness` skill.
 
-They do not all run at the same cadence: an edit to `src/*.py` runs four of them (~17s),
-and a commit runs all five (~62s). `mutation_test.py` is the commit-only one — the skill's
+They do not all run at the same cadence: an edit to `src/*.py` runs five of them,
+and a commit runs all six. `mutation_test.py` is the commit-only one — the skill's
 table says why.
 
 The one thing you cannot discover from the repo: **run `./.githooks/install.sh` once per clone, and
