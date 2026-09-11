@@ -117,7 +117,7 @@ here using the `*_url` convention — where it is the largest single contributor
 | `src/mcp_test.py` | drives the MCP server as a subprocess over JSON-RPC |
 | `src/mutation_test.py` | breaks the CLI on purpose and checks that cli_test.py notices |
 | `src/checks_<payload>.py` | the expected answers for one sample, paired to it by name (eight of them) |
-| `src/measure_*.py` | one-off measurement scripts — not gates, nothing runs them but you |
+| `src/measure_*.py` | one-off measurement scripts — not gates, nothing runs them but you (`measure_miscount.py` is the five-arm run that isolated the stored miscount) |
 | `docs/` | the written record — `docs/README.md` is the index of which file answers what |
 
 Run `./.githooks/install.sh` once per clone. `data/samples/` is gitignored — it

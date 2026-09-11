@@ -181,10 +181,16 @@ re-measure and a cold read that the second's questions ride along on.
       - The **16 comprehension questions are unmeasured.** They need a judge, and
         judging is the one part with no free path. `JUDGE_MODEL` is pinned and
         still unexercised; every run prints `JUDGED not measured`.
-      - **Why the stored arm miscounts a column the compressed arm counts
-        correctly.** Two readers, two days, the same two questions. This is the
-        only open finding seven cold reads have produced, and unlike every
-        previous one it has no candidate fix.
+      - **Why a reader that has fetched sometimes misreads a row.** Narrowed
+        2026-09-12 by `src/measure_miscount.py`, 25 readers over five arms
+        (`docs/cold-reads/2026-09-12-miscount.md`): the document is **not** the
+        cause (20 readers with no fetch tool, 0 misses, on the same bytes), the
+        size of the task is not either, and `[Nt]` — the leading suspect — was
+        cleared. It is also **not counting**: the failing reader misread one row
+        and totalled its own list correctly. What is left is one miss in five in
+        the only arm that could fetch, which is a suspect and not a rate. The
+        arm that would separate "the turns" from "the retrieved text in the
+        context" is named there and not built.
 - [ ] **Deferred, and named rather than forgotten:** `margin export`/`import`
       (a document is meaningless without its index and objects, and there is no
       bundle unit); GC and `fsck` (a lost index leaks objects forever);
