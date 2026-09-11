@@ -7,7 +7,8 @@ These checks were written while the compressor still emitted this payload as
 plain JSON, so that the rule which turned it into a table had something to be
 measured against rather than something to be justified by. That rule now exists
 (`table._is_record_map`): the map key becomes a column, `#keyed` names it, and
-coingecko went 0% -> 30.6%.
+coingecko went 0% -> 29.6% (30.6% before the #keyed legend clause grew on
+2026-09-12; docs/thresholds.md).
 
 What they guard now is the thing that rule can most easily get wrong — the map
 keys ARE the records' identity, so losing or reordering them leaves eight

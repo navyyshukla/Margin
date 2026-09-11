@@ -785,6 +785,46 @@ def legend_explains_dotted_columns(payload):
     return not shows_dotted or "a.b" in legend
 
 
+def legend_explains_keyed_column(payload):
+    """If the document carries a #keyed line, the legend must name that column
+    AND say it is not a field of the record.
+
+    Returns None when the payload produced no #keyed line, so the caller can tell
+    "passed" from "never applied" — Rule 2.
+
+    The negation is the assertion, not decoration. Cold read #5 (2026-09-11) had
+    the old wording in front of it, which named the column and stopped there, and
+    reported _key as a thirteenth field of the ethereum record. Round-trip cannot
+    see any of this: decompress strips the column either way, so the data is
+    correct and the explanation is wrong (Rule 3, same family as
+    legend_explains_dotted_columns and type_claims_are_backed).
+
+    The column name is read out of the document rather than assumed to be `_key`:
+    free_key_name dodges a record's own keys, so a payload whose records already
+    carry `_key` and `_key2` is keyed on `_key3`, and a legend naming the wrong
+    one is exactly the failure this is aimed at.
+
+    That last claim is why the name is matched as `column {name} ` — the exact
+    phrase render.legend_for emits — and not with `in`. A substring test is
+    one-directional: with the document keyed on `_key`, a legend wrongly naming
+    `_key3` still contains `_key`, so the check passes on the half of the failure
+    it was named for. The `_key3` fixture happens to exercise the other half,
+    which is how a substring test looked like it worked (review, 2026-09-12).
+    """
+    text, _ = compress_json(payload)
+    if not text.startswith(FORMAT_MARKER):
+        return None
+
+    lines = text.split("\n")
+    keyed = next((l for l in lines if l.startswith(render.KEYED_PREFIX)), None)
+    if keyed is None:
+        return None
+
+    column = json.loads(keyed[len(render.KEYED_PREFIX):])
+    legend = next((l for l in lines if l.startswith(LEGEND_PREFIX)), "")
+    return f"column {column} " in legend and "NOT a field of the record" in legend
+
+
 def type_claims_are_backed(payload):
     """No column may declare an array type it has no evidence for.
 
@@ -866,6 +906,34 @@ def main():
     for index, payload in enumerate(MAY_DEGRADE):
         if not degrades_safely(payload):
             failures.append(("MAY_DEGRADE", index, payload))
+
+    # The #keyed legend, checked on the fixed cases rather than the random sweep:
+    # random_payload never builds a record map, so a check hung off the sweep
+    # would pass while testing nothing (Rule 2).
+    #
+    # Three MUST_TABULATE cases are written as record maps and exactly ONE of
+    # them reaches this check — the `_key3` fixture, whose records own `_key` and
+    # `_key2`. The other two save 3.3% and -5.1%, below MIN_TABLE_SAVING, so they
+    # fall back to plain JSON and emit no #keyed line at all; the printed
+    # `(N keyed)` count is what says so out loud. Do not read the fixture list as
+    # three-way redundancy here — it is one tripwire, which is why a run finding
+    # zero is a failure rather than a skip (Rule 13's shape).
+    #
+    # (`MUST_TABULATE` asserts only round-trip, so two entries in a list of that
+    # name silently do not tabulate. Pre-existing and left alone deliberately:
+    # changing what MUST_TABULATE means is a bigger change than this one, and
+    # Rule 6 is where it belongs.)
+    keyed_cases = 0
+    for index, payload in enumerate(MUST_TABULATE):
+        verdict = legend_explains_keyed_column(payload)
+        if verdict is None:
+            continue
+        keyed_cases += 1
+        if not verdict:
+            failures.append(("MUST_TABULATE (#keyed unexplained in the legend)",
+                             index, payload))
+    if keyed_cases == 0:
+        failures.append(("MUST_TABULATE (no case produced a #keyed line at all)", 0, []))
 
     # Two claims per case, not one. "It round-tripped" is satisfied by the JSON
     # fallback, so each of these also has to show the #dict line it was written
@@ -960,7 +1028,8 @@ def main():
     # The tabulated count is printed because a run where nothing tabulated would
     # pass while testing only json.dumps — a green result that means nothing.
     # If it ever reads 0, the generator is broken, not the compressor.
-    print(f"property test: {fixed} fixed cases, {trials} safe-key trials "
+    print(f"property test: {fixed} fixed cases ({keyed_cases} keyed), "
+          f"{trials} safe-key trials "
           f"({tabulated} built a table, {dictionaried} built a #dict, "
           f"{stored} built a #store), "
           f"{trials // 4} awkward-key trials, seed {seed}")

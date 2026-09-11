@@ -221,19 +221,24 @@ Claude's own reading does not count — it designed the format.
 
 **The procedure in full, and the running scoreboard, are in
 [`docs/cold-reads.md`](cold-reads.md)** — one copy, because a score kept in three
-places drifts on the next read. Three runs so far, and every one found a real
-defect no automated gate could have seen.
+places drifts on the next read. **How many runs there have been, and what each
+found, is deliberately not repeated here** — this paragraph said "three runs so
+far" long after there were seven, which is the drift the sentence above was
+written to prevent and Rule 5 in its usual clothes.
 
-All three are the same failure: **counting**. Reads #1 and #2 counted positional
-values against a header some distance above and caught themselves by recounting;
-read #3 could not verify an index 61 entries into an unmarked array, and on the
-very next question miscounted 58 as 57. "Caught by recounting" is luck about how
-careful the reader was, not a property of the format.
+What has not changed across any of them is the failure they keep finding:
+**counting**. Reads #1 and #2 counted positional values against a header some
+distance above and caught themselves by recounting; read #3 could not verify an
+index 61 entries into an unmarked array, and on the very next question miscounted
+58 as 57. "Caught by recounting" is luck about how careful the reader was, not a
+property of the format.
 
-So the format has now paid twice to remove counting: the header repeats every 40
-rows (+0.3%), and the `#dict` line is an object keyed by index rather than a
-bare list (+0.2%). Both times the alternative was to hope the reader counts
-carefully, and the third read is what that hope looks like when it fails.
+So the format has paid, more than once, to remove counting: the header repeats
+every 40 rows (+0.3%), and the `#dict` line is an object keyed by index rather
+than a bare list (+0.2%). Every time the alternative was to hope the reader
+counts carefully, and read #3 is what that hope looks like when it fails. The
+current list of what has been bought, and what is still open, is in
+`docs/cold-reads.md`.
 
 Correctness is not the same as legibility, and only this test tells them apart.
 

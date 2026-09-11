@@ -63,6 +63,40 @@ def q10_plain_issue_numbers(data):
     return [i["number"] for i in data if "pull_request" not in i]
 
 
+# --- the two that reach into a body ----------------------------------------
+# Every check above answers from a column that stays in the document. These two
+# answer from `body`, which is exactly what the store moves out of it: all 30
+# bodies become \@nnnn handles under --store, so in the stored arm these are the
+# only graded questions that cannot be answered without calling `fetch`.
+#
+# That gap is why they exist. Cold read #5 exercised retrieval exactly once, on
+# jsonplaceholder, so the store's central claim rested on a single fetch
+# (docs/cold-reads/2026-09-11.md). In the raw and compressed arms they are
+# ordinary reading questions, which is what makes the comparison mean anything.
+
+def q14_issues_fixing_37507(data):
+    """Two PRs say they fix the same issue — findable only in the body text.
+
+    Sorted rather than in document order: the stored arm may resolve handles in
+    whatever order it fetches them, and the question being asked is which issues,
+    not which order they came back in.
+    """
+    return sorted(i["number"] for i in data
+                  if "Fixes #37507" in (i.get("body") or ""))
+
+
+def q15_repro_url_of_37534(data):
+    """The first line after a named heading, deep inside one body.
+
+    Deliberately one value from one body rather than a survey of all thirty: it
+    is the cheap, targeted fetch, and it separates "the reader could not retrieve
+    at all" from "the reader could not retrieve thirty things at once".
+    """
+    body = issue_by_number(data, 37534)["body"]
+    after = body.split("### Website or app", 1)[1]
+    return next(line.strip() for line in after.splitlines() if line.strip())
+
+
 PRESERVE_CHECKS = [
     ("Q1  title of #37508", q1_title_of_37508),
     ("Q2  author of #37501", q2_author_of_37501),
@@ -74,6 +108,8 @@ PRESERVE_CHECKS = [
     ("Q8  issues labeled Type: Bug", q8_type_bug_issues),
     ("Q9  issues by dependabot", q9_dependabot_issues),
     ("Q10 plain (non-PR) issue numbers", q10_plain_issue_numbers),
+    ("Q14 issues whose body says it fixes #37507", q14_issues_fixing_37507),
+    ("Q15 repro URL inside #37534's body", q15_repro_url_of_37534),
 ]
 
 
@@ -119,6 +155,14 @@ ASK = {
           "array of their issue numbers, in the order they appear.",
     "Q10": "Which entries are plain issues rather than pull requests? Answer as an "
            "array of their issue numbers, in the order they appear.",
+    # The two that require the body. Neither names the store or the fetch tool:
+    # whether a reader works out that it has to retrieve, from the legend alone,
+    # is the thing being measured (the same reasoning as eval_model.PREAMBLE).
+    "Q14": "Which entries have a body stating that they fix issue 37507 (the text "
+           "'Fixes #37507')? Answer as an array of their issue numbers, sorted "
+           "ascending.",
+    "Q15": "In the body of issue 37534, a URL appears on the first non-empty line "
+           "under the heading '### Website or app'. Give that URL exactly.",
     "Q11": "Summarize issue 37534 in one sentence.",
     "Q12": "Which pull requests are dependency bumps, and what does each one touch?",
     # The adversarial one, and the only question whose right answer DIFFERS by

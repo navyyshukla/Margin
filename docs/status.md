@@ -10,7 +10,7 @@ than remember (`harness.md` Rule 5).**
 ## The compressor is finished (2026-09-09)
 
 Three PRs, all merged: #1 the compressor, #2 the `margin` CLI, #3 `#dict`. Eight
-payloads from eight APIs, **121,569 → 71,022 tokens (41.6%)**, worst case 0.0% —
+payloads from eight APIs, **121,569 → 71,034 tokens (41.6%)**, worst case 0.0% —
 nothing ever comes out larger than it went in. Per-payload numbers and the shapes
 behind them: `docs/shapes.md`.
 
@@ -54,7 +54,7 @@ server, not yet". Worth ~92% on GitHub.
 
 `docs/shapes.md` said to decide it against all eight payloads rather than the two
 that existed when it was first raised. Measured properly, in document terms:
-**60% of what remains (42,334 of 71,022 tokens) is bulk content** — free text plus
+**60% of what remains (42,334 of 71,034 tokens) is bulk content** — free text plus
 HackerNews's 6,662 comment IDs — and it is 89% of `jsonplaceholder`, 88% of
 `github_issues`, 75% of `hn_stories`.
 
@@ -115,22 +115,76 @@ server + CLI wiring → cold read #4 and a model-in-the-loop eval.
       strips it and the round-trip gate has always passed — but a *reader* reports
       Margin's scaffolding as data, and the legend line did not stop it. This is
       the class of defect no gate here can see, found by a machine for the first
-      time rather than by a human cold reader. **Not yet fixed:** the fix is a
-      legibility change owing a cold read and a re-measure.
+      time rather than by a human cold reader. **Fixed 2026-09-12, below.**
 
       **The two stored misses are reader noise, not data loss** — verified:
       `comments` decompresses identically in both arms (11 zeros, 31 total), no
       `comments` cell is a handle, and the compressed arm answered both
-      correctly. One reader, one sample, arithmetic.
+      correctly. One reader, one sample, arithmetic. **Reproduced 2026-09-11's
+      finding exactly on 2026-09-12** with a different reader, which makes it two
+      samples and still unexplained.
+
+## PR #8 — `_key` said plainly, and retrieval measured more than once (2026-09-12)
+
+The two things cold read #5 left open, shipped together because the first owes a
+re-measure and a cold read that the second's questions ride along on.
+
+- [x] **The `#keyed` legend says what `_key` is *not*.** One clause, +12 tokens,
+      `coingecko_prices` 30.6% → **29.6%** and nothing set-wide (71,022 → 71,034,
+      41.6% either way). Derivation in `docs/thresholds.md`.
+
+      Nothing guarded that sentence before: `decompress` strips the column either
+      way, so round-trip cannot see a legend (Rule 3). `property_test.py` now
+      asserts the clause names the **actual** column — the collision fixture keys
+      on `_key3` — and reports how many fixed cases were keyed, because the random
+      sweep never builds a record map (Rule 2). `mutation_test.py` 24 → 25, the
+      new one reverting to the exact pre-fix wording rather than deleting the
+      clause.
+
+- [x] **Three graded questions that cannot be answered without fetching.**
+      `Q14`/`Q15` on github (bodies) and `H14` on hn (a stored `children` array).
+      Graded questions **72 → 75**; the eight `checks_*.py` modules now hold 80
+      checks — counted at import time, not by reading the list literals, because
+      `checks_pokeapi_ditto.py` appends one after its own. Counting the literals
+      is how this line first said 79 and how "76 checks" had been wrong at 77
+      since before this PR (review, 2026-09-12).
+
+- [x] **Cold read #6** (`docs/cold-reads/2026-09-12.md`), the #1–#4 kind: 10/10,
+      confidence **9/10** — the highest of seven reads. C8 correct, `_key`
+      excluded, and the reader named the new clause as what decided it while
+      still calling the question a judgment call. Everything it flagged was a
+      defect in the *questions*, not the document.
+
+- [x] **Cold read #7, the sweep** (`docs/cold-reads/2026-09-12-sweep.md`), 75
+      graded questions:
+
+      | arm | correct | was |
+      |---|---:|---:|
+      | raw (reference) | **75/75** | 72/72 |
+      | compressed | **75/75** | 71/72 |
+      | stored | **73/75** | 69/72 |
+
+      **The stored arm fetched 4 times, on all three payloads that carry a
+      store**, and every retrieved answer was right — including `H14`, where the
+      reader fetched a `dints` cell and applied the legend's "first is absolute"
+      clause to a value that was not in the document at all.
+
+      **The run's own verdict is FAIL**, and it is reported rather than softened:
+      `GRADED_ALLOWED_GAP = 0` and the stored gap is 2. The two misses are `Q5`
+      and `Q6` — the same two as 2026-09-11, a different reader, a column that is
+      byte-identical across arms and contains no handle, which the same reader
+      counted wrong immediately after fetching two bodies correctly. Counting,
+      now demonstrated twice, with no candidate fix: a count is not a marker a
+      legend clause can explain.
 
 - [ ] **Still owed, and named rather than quietly dropped:**
       - The **16 comprehension questions are unmeasured.** They need a judge, and
-        judging is the one part with no free path.
-      - **Retrieval was exercised once**, on `jsonplaceholder`. On GitHub and HN
-        the store holds only bodies, and no *graded* question reads a body — the
-        questions that do are the comprehension ones above. So the store's
-        central claim rests on a single fetch. A graded question that requires a
-        stored value is the cheapest thing that would fix this.
+        judging is the one part with no free path. `JUDGE_MODEL` is pinned and
+        still unexercised; every run prints `JUDGED not measured`.
+      - **Why the stored arm miscounts a column the compressed arm counts
+        correctly.** Two readers, two days, the same two questions. This is the
+        only open finding seven cold reads have produced, and unlike every
+        previous one it has no candidate fix.
 - [ ] **Deferred, and named rather than forgotten:** `margin export`/`import`
       (a document is meaningless without its index and objects, and there is no
       bundle unit); GC and `fsck` (a lost index leaks objects forever);

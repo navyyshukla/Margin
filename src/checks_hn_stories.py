@@ -80,6 +80,24 @@ def h11_wrapper_metadata_survives(data):
     return data["nbHits"], data["hitsPerPage"], data["page"]
 
 
+def h14_first_comment_id_of_hawking_story(data):
+    """The one graded question here whose answer lives in the store.
+
+    `children` is 156 comment ids, delta-encoded as `dints` and — under --store —
+    moved out of the document entirely: the cell renders as \\@nnnn[316t], so a
+    reader has to fetch it before it can answer. Every other H check reads a
+    column that stays put, which is why cold read #5 never called `fetch` on this
+    payload at all (docs/cold-reads/2026-09-11.md).
+
+    The FIRST id, not the count. A dints cell states its first value absolutely
+    and the rest as differences, so this asks the reader to apply exactly one
+    clause of the legend to exactly one token. Counting 156 of them is the thing
+    all five cold reads have got wrong at least once (docs/cold-reads.md), and a
+    question that failed on arithmetic would say nothing about retrieval.
+    """
+    return story_by_id(data, "16582136")["children"][0]
+
+
 PRESERVE_CHECKS = [
     ("H1  title of the top-scoring story", h1_title_of_top_story),
     ("H2  author of story 16582136", h2_author_of_hawking_story),
@@ -92,6 +110,7 @@ PRESERVE_CHECKS = [
     ("H9  most-discussed story title", h9_most_discussed_title),
     ("H10 _tags of story 16582136", h10_tags_of_hawking_story),
     ("H11 wrapper metadata survives", h11_wrapper_metadata_survives),
+    ("H14 first comment id of story 16582136", h14_first_comment_id_of_hawking_story),
 ]
 
 # Nothing to assert here yet: strip_boilerplate finds no *_url keys anywhere in
@@ -123,6 +142,10 @@ ASK = {
            "an array of strings, in the order they appear.",
     "H11": "What are the values of nbHits, hitsPerPage and page? Answer as a "
            "three-element array in that order.",
+    # Says "first listed", not "smallest": the ids are not in ascending order,
+    # and asking for a minimum would send the reader through all 156 of them.
+    "H14": "What is the first comment id listed in the children of the story whose "
+           "objectID is 16582136? Answer with a number.",
     "H12": "Summarize what the top 3 stories by points are about.",
     "H13": "Which stories are about AI companies, and what happened in each?",
 }
