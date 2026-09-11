@@ -52,6 +52,7 @@ import datetime
 import importlib
 import json
 import os
+import random
 import re
 import sys
 import tempfile
@@ -78,6 +79,20 @@ ANSWER_MODEL = "gemini-3.8-flash"
 # against the risk that a Google-side change makes a future run non-comparable.
 # That risk is why both ids are stamped into the run file rather than assumed.
 JUDGE_MODEL = "gemini-3.1-pro-preview"
+
+# What a run file records when the judging was done offline, by subagents.
+#
+# Named rather than left as the pinned id, because a run file must never imply a
+# model that did not run it — the same reason the offline reader path writes
+# "(offline reader — see the task files)" instead of ANSWER_MODEL.
+#
+# **This judge shares a model family with the answerer**, which a paid judge from
+# another vendor would not. It is the weaker instrument and the docs say so in
+# those words; JUDGED_ALLOWED_GAP bounds what may be claimed from it rather than
+# removing the bias. It is also asked only whether two answers SAY THE SAME
+# THING, never which is correct, which narrows the room a shared prior has to
+# work in — narrows, not closes.
+OFFLINE_JUDGE = "(offline judge — subagents, same model family as the answerer)"
 
 # Prices per 1M tokens, from ai.google.dev/gemini-api/docs/pricing on 2026-09-11.
 # Only used for the --dry-run estimate, so being a little stale costs nothing but
@@ -954,6 +969,366 @@ def grade(out_dir, arms_wanted):
     return summarise(out, present)
 
 
+# --- the offline judge ----------------------------------------------------
+
+# The comparison a judge is asked to make, with the arms stripped out of it.
+#
+# judge()'s own prompt says "The first was produced from the original data; the
+# second from a compressed form of it" — fine when the reader is a paid API model
+# that will never see anything else, and a leak when it is a subagent that can
+# guess which side it is expected to prefer. So the sides are A and B, which one
+# is the reference is randomised per task, and the mapping lives only in
+# _judge_truth.json. Same isolation emit() already applies to readers: not even
+# which arm it is.
+JUDGE_TASK = """You are comparing two answers to the same question.
+
+Both answers were written about the same underlying data. Decide whether they
+say substantially the SAME thing. Differences in wording, length, ordering or
+level of detail do not matter. A fact present in one and missing from the other,
+a fact they contradict each other on, or a fact one of them invented, does.
+
+Neither answer is authoritative. You are not judging which is better or which is
+correct — only whether they say the same thing.
+
+Reply with a single JSON object and nothing else:
+
+    {{"same": true, "why": "one sentence"}}
+
+QUESTION: {question}
+
+ANSWER A:
+{first}
+
+ANSWER B:
+{second}
+"""
+
+
+def answer_text(record):
+    """What a reader actually said, from either path's record shape.
+
+    The API path stores the model's output in `text` and never sets `answer`;
+    the offline path writes both. Reading only `answer` made --emit-judge emit
+    ZERO tasks for any run file the live sweep produced, and then blame the run
+    file for having no judged answers (review, 2026-09-12). One accessor, so the
+    two shapes cannot disagree again — Rule 4's shape.
+    """
+    for key in ("answer", "text"):
+        value = record.get(key)
+        if value is None:
+            continue
+        text = value if isinstance(value, str) else json.dumps(value, default=str)
+        if text.strip() and text.strip() not in ("null", '""'):
+            return text
+    return ""
+
+
+def _judge_pairs(out):
+    """Every (payload, label, arm) in a run file that a judge could rule on.
+
+    Skips arms with no answer, arms that ARE raw, and by_construction twins —
+    a twin inherits its verdict the way run_payload does rather than being
+    judged twice for the same bytes.
+    """
+    for payload in out["payloads"]:
+        for row in payload.get("judged", []):
+            raw = row["arms"].get("raw")
+            if not raw or not answer_text(raw):
+                continue
+            for arm, rec in row["arms"].items():
+                if arm == "raw" or rec.get("by_construction"):
+                    continue
+                if not answer_text(rec):
+                    continue
+                yield payload["payload"], row["label"], arm, raw, rec
+
+
+def _control_pairs(out, rng):
+    """Pairs whose verdict is known before anybody judges them.
+
+    The first judged run came back 18 "same" out of 18, and a judge that has
+    never once said "different" is indistinguishable from a judge that cannot.
+    That is Rule 14 — *a detector nobody has shown a positive to is not a
+    detector* — pointed at the judge instead of at the store, and the fix is the
+    same one `detects_a_broken_store()` uses: feed it hand-built positives.
+
+    Two kinds, both built only from raw answers so no arm is involved:
+
+      SAME       one answer against itself. A judge that fails this is broken
+                 in the direction that would silently pass every real pair.
+      DIFFERENT  two answers to DIFFERENT questions about the same payload.
+                 They are genuinely not the same thing, and a judge that calls
+                 them same is the failure mode that makes 16/16 meaningless.
+    """
+    controls = []
+    for payload in out["payloads"]:
+        answers = [(row["label"], answer_text(row["arms"]["raw"]))
+                   for row in payload.get("judged", [])
+                   if row["arms"].get("raw") and answer_text(row["arms"]["raw"])]
+        if not answers:
+            continue
+        label, text = answers[0]
+        controls.append({"kind": "control", "expect": True, "label": label,
+                         "first": text, "second": text,
+                         "payload": payload["payload"]})
+        if len(answers) > 1:
+            other_label, other = answers[1]
+            # The question shown is the FIRST one, so the pair is a real
+            # mismatch rather than two answers to two questions nobody asked
+            # together — the shape a compressed arm would produce if it had
+            # answered the wrong thing entirely.
+            controls.append({"kind": "control", "expect": False, "label": label,
+                             "first": text, "second": other,
+                             "payload": payload["payload"],
+                             "note": f"second is the answer to {other_label}"})
+    rng.shuffle(controls)
+    return controls
+
+
+def emit_judge(run_file, out_dir):
+    """Write one blinded comparison task per judged answer, plus controls.
+
+    The free path for the half that has never been measured. `--emit` has been
+    collecting these free-text answers since it was written and `--grade` stored
+    them and ignored them; this turns them into a verdict without buying a model.
+    """
+    with open(run_file, encoding="utf-8") as handle:
+        out = json.load(handle)
+
+    os.makedirs(out_dir, exist_ok=True)
+    answers_dir = os.path.join(out_dir, "judge_answers")
+    if os.path.isdir(answers_dir) and os.listdir(answers_dir):
+        print(f"refusing to emit: {answers_dir} already holds verdicts.",
+              file=sys.stderr)
+        print("Move or delete them first — they belong to a previous run.",
+              file=sys.stderr)
+        return 2
+    os.makedirs(answers_dir, exist_ok=True)
+
+    # Stale tasks from a previous emit are removed, not left beside the new
+    # ones. A judge told to answer every judge_*.md in the directory would
+    # otherwise answer tasks from a different run; _judge_truth.json does not
+    # list them, so the verdicts are dropped without a word and the judging is
+    # silently wasted (review, 2026-09-12).
+    for stale in sorted(os.listdir(out_dir)):
+        if stale.startswith("judge_") and stale.endswith(".md"):
+            os.remove(os.path.join(out_dir, stale))
+
+    # Seeded so a re-emit of the same run file produces the same blinding. A
+    # judge task that silently changes sides between emits would make two runs
+    # of "the same" comparison not comparable.
+    rng = random.Random(os.path.abspath(run_file))
+
+    # Real pairs and controls, shuffled together and named by number.
+    #
+    # The names used to be `<payload>__<qid>__<arm>`, which told a judge reading
+    # its own filename which arm it was ruling on — the leak this file removes
+    # from the prompt, left in the one place nobody looked. Opaque ids also make
+    # a control indistinguishable from a real pair, which is the whole point of
+    # having controls.
+    pending = [{"kind": "real", "payload": payload, "label": label, "arm": arm,
+                "raw": raw, "rec": rec}
+               for payload, label, arm, raw, rec in _judge_pairs(out)]
+    pending += _control_pairs(out, rng)
+    rng.shuffle(pending)
+
+    tasks = []
+    for number, item in enumerate(pending, start=1):
+        name = f"judge_{number:03d}"
+        reference_first = rng.random() < 0.5
+        if item["kind"] == "real":
+            sides = (answer_text(item["raw"]), answer_text(item["rec"]))
+        else:
+            sides = (item["first"], item["second"])
+        first, second = sides if reference_first else (sides[1], sides[0])
+        with open(os.path.join(out_dir, name + ".md"), "w",
+                  encoding="utf-8") as handle:
+            handle.write(JUDGE_TASK.format(question=item["label"],
+                                           first=first, second=second))
+        entry = {"task": name, "kind": item["kind"], "payload": item["payload"],
+                 "label": item["label"],
+                 "reference_is": "A" if reference_first else "B"}
+        if item["kind"] == "real":
+            entry["arm"] = item["arm"]
+        else:
+            entry["expect"] = item["expect"]
+            if item.get("note"):
+                entry["note"] = item["note"]
+        tasks.append(entry)
+
+    key_path = os.path.join(out_dir, "_judge_truth.json")
+    with open(key_path, "w", encoding="utf-8") as handle:
+        json.dump({"run_file": os.path.abspath(run_file), "tasks": tasks},
+                  handle, indent=2)
+
+    real = [t for t in tasks if t["kind"] == "real"]
+    controls = [t for t in tasks if t["kind"] == "control"]
+    print(f"{len(tasks)} judging task(s) in {out_dir}")
+    by_arm = collections.Counter(task["arm"] for task in real)
+    for arm, count in sorted(by_arm.items()):
+        print(f"  {arm:<12} {count}")
+    print(f"  {'controls':<12} {len(controls)} "
+          f"({sum(1 for t in controls if t['expect'])} must read same, "
+          f"{sum(1 for t in controls if not t['expect'])} must read different)")
+    if not real:
+        print("  nothing to judge — the run file has no judged answers. "
+              "Was it graded from tasks emitted with --no-judge?")
+    print(f"\nthe key, including which tasks are controls: {key_path} — "
+          "never show it to a judge")
+    print(f"verdicts go in {answers_dir}/<task>.json as "
+          '{"same": true|false, "why": "..."}')
+    return 0
+
+
+def ingest_judgements(task_dir, arms_wanted):
+    """Fold offline verdicts into the run file they came from, then re-summarise.
+
+    Writes `same_as_raw` onto the judged records, which is the entire contract
+    summarise() needs — the run-file format is unchanged.
+    """
+    with open(os.path.join(task_dir, "_judge_truth.json"),
+              encoding="utf-8") as handle:
+        key = json.load(handle)
+    with open(key["run_file"], encoding="utf-8") as handle:
+        out = json.load(handle)
+
+    def verdict_for(task_name):
+        path = os.path.join(task_dir, "judge_answers", task_name + ".json")
+        if not os.path.exists(path):
+            return None, "no verdict file"
+        with open(path, encoding="utf-8") as handle:
+            given = json.load(handle)
+        if not isinstance(given, dict) or "same" not in given:
+            return None, "no verdict in the file"
+        # Strictly a JSON boolean. `bool(given["same"])` folded {"same": "false"}
+        # in as True — plausible output from something writing JSON by hand, and
+        # the whole design rests on trusting hand-written verdict files
+        # (review, 2026-09-12).
+        if not isinstance(given["same"], bool):
+            return None, f"'same' is {given['same']!r}, not true or false"
+        return given["same"], str(given.get("why", ""))[:500]
+
+    # The controls first, and nothing is written if they fail.
+    #
+    # This is RAW_MIN_GRADED_FRACTION's move applied to the judge: a comparison
+    # against a reference that has itself collapsed is not a comparison. The
+    # first judged run returned "same" 18 times out of 18 — which is either a
+    # real result or a judge that cannot say "different", and there was no way
+    # to tell. Now there is, and a judge that fails its own controls produces no
+    # judged number at all rather than a flattering one.
+    # Unanswered and answered-wrong are different states and used to be one.
+    # Running this before the judge had finished printed "JUDGE REJECTED — 2 of
+    # 2 controls failed" over "a judge that cannot rule correctly cannot be
+    # trusted", which is a false accusation against a judge that was simply
+    # still working (review, 2026-09-12).
+    controls = [t for t in key["tasks"] if t["kind"] == "control"]
+    control_failures = []
+    control_unanswered = []
+    for task in controls:
+        same, why = verdict_for(task["task"])
+        if same is None:
+            control_unanswered.append(f"{task['task']}: {why}")
+        elif same != task["expect"]:
+            control_failures.append(
+                f"{task['task']}: expected "
+                f"{'same' if task['expect'] else 'different'}, judge said "
+                f"{'same' if same else 'different'} ({why[:120]})")
+
+    if control_failures:
+        print(f"\nJUDGE REJECTED — {len(control_failures)} of {len(controls)} "
+              f"control(s) were answered WRONGLY:")
+        for line in control_failures:
+            print(f"  {line}")
+        print("\nNo judged verdict was written. A judge that cannot rule "
+              "correctly on pairs whose answer was known in advance cannot be "
+              "trusted on the pairs whose answer is the point (Rule 14).")
+        return 2
+    if control_unanswered:
+        print(f"\nINCOMPLETE — {len(control_unanswered)} of {len(controls)} "
+              f"control(s) have no verdict yet:")
+        for line in control_unanswered[:8]:
+            print(f"  {line}")
+        print("\nNothing was written. This is a judging pass that has not "
+              "finished, not a judge that failed — run it again once every "
+              "control has a verdict.")
+        return 2
+    if not controls:
+        print("\nWARNING: this key has no controls, so nothing has shown this "
+              "judge can say 'different'. Re-emit to get them.")
+
+    index = {(task["payload"], task["label"], task["arm"]): task
+             for task in key["tasks"] if task["kind"] == "real"}
+
+    verdicts = 0
+    missing = []
+    for payload in out["payloads"]:
+        for row in payload.get("judged", []):
+            raw = row["arms"].get("raw")
+            if raw is not None and answer_text(raw):
+                # Raw is trivially the same as itself, and saying so is load
+                # bearing: summarise() counts raw's judged_ok as the reference
+                # every gap is measured from, so leaving it unset makes every
+                # gap negative and every arm PASS vacuously.
+                raw["same_as_raw"] = True
+            for arm, rec in row["arms"].items():
+                if arm == "raw":
+                    continue
+                task = index.get((payload["payload"], row["label"], arm))
+                if task is None:
+                    continue
+                same, why = verdict_for(task["task"])
+                if same is None:
+                    missing.append(f"{task['task']} ({why})")
+                    continue
+                rec["same_as_raw"] = same
+                rec["judge_note"] = why
+                verdicts += 1
+
+    # Twins inherit, exactly as run_payload does: identical bytes cannot produce
+    # a different answer, so judging them twice would be measuring the judge.
+    for payload in out["payloads"]:
+        for row in payload.get("judged", []):
+            for arm, rec in row["arms"].items():
+                twin = rec.get("by_construction")
+                if twin and "same_as_raw" not in rec:
+                    source = row["arms"].get(twin, {})
+                    if "same_as_raw" in source:
+                        rec["same_as_raw"] = source["same_as_raw"]
+                        rec["judge_note"] = source.get("judge_note", "")
+
+    # Nothing folded, nothing stamped. OFFLINE_JUDGE's own docstring says a run
+    # file must never imply a model that did not run it, and writing the stamp
+    # unconditionally did exactly that: a pass that folded zero verdicts left the
+    # file claiming a judge and every raw record claiming same_as_raw
+    # (review, 2026-09-12).
+    if not verdicts:
+        print("\nno verdicts folded — the run file was left untouched.")
+        if missing:
+            print(f"  {len(missing)} task(s) still unanswered: "
+                  f"{', '.join(missing[:8])}{' ...' if len(missing) > 8 else ''}")
+        return 2
+
+    out["judge_model"] = OFFLINE_JUDGE
+    out["judge_controls"] = {"n": len(controls), "failed": 0,
+                             "gated": bool(controls)}
+    with open(key["run_file"], "w", encoding="utf-8") as handle:
+        json.dump(out, handle, indent=2, default=str)
+
+    if controls:
+        print(f"\njudge controls: {len(controls)}/{len(controls)} correct "
+              f"({sum(1 for t in controls if not t['expect'])} of them pairs it "
+              f"had to call DIFFERENT)")
+    print(f"{verdicts} verdict(s) folded into {key['run_file']}")
+    if missing:
+        print(f"no verdict yet for {len(missing)} task(s): "
+              f"{', '.join(missing[:8])}{' ...' if len(missing) > 8 else ''}")
+
+    present = tuple(a for a in arms_wanted
+                    if any(a in r["arms"] for p in out["payloads"]
+                           for r in p["graded"]))
+    return summarise(out, present)
+
+
 def inconclusive_reasons(tally, arms_wanted):
     """Every reason this run cannot support a verdict. Empty means it can.
 
@@ -997,6 +1372,32 @@ def inconclusive_reasons(tally, arms_wanted):
                 f"the {arm} arm answered {n} graded questions against raw's "
                 f"{raw['graded_n']} — different denominators, so the gap between "
                 f"them is not a difference in quality")
+
+        # 4. The same shape, one half over. Until the offline judge existed the
+        #    judged tally was always 0/0 and printed "not measured", so nothing
+        #    needed guarding. Now a judge pass that covered three payloads out of
+        #    eight would print a clean JUDGED gap off a third of the data —
+        #    which is reason 2 again, wearing the other half's clothes.
+        #
+        # 5. And reason 3 over the same half, which the first version of this
+        #    missed by writing `if judged_n and ...` — the short-circuit skipped
+        #    exactly the case that actually happens. A judge that ruled on the
+        #    controls and none of the real tasks left raw at 16/16 and every
+        #    other arm at 0/0, and the run printed "JUDGED not measured" and
+        #    exited 0 "within the stated thresholds" (review, 2026-09-12). The
+        #    graded half has had this guard since the review before last; the
+        #    judged half shipped without it for one commit.
+        judged_n = tally[arm]["judged_n"]
+        if raw["judged_n"] and not judged_n:
+            reasons.append(
+                f"raw was judged on {raw['judged_n']} questions and the {arm} arm "
+                f"on none — it was never judged, so its absence of a gap is an "
+                f"absence, not a result")
+        elif judged_n and judged_n != raw["judged_n"]:
+            reasons.append(
+                f"the {arm} arm was judged on {judged_n} questions against raw's "
+                f"{raw['judged_n']} — different denominators, so the judged gap "
+                f"is not a difference in quality either")
     return reasons
 
 
@@ -1099,8 +1500,14 @@ def summarise(out, arms_wanted):
     return 1 if failed else 0
 
 
-def _fake_run(arms):
-    """A run file shaped enough for summarise(), built from {arm: (ok, n)}."""
+def _fake_run(arms, judged=None):
+    """A run file shaped enough for summarise(), built from {arm: (ok, n)}.
+
+    `judged` takes the same shape and fills the judged half, which used to be
+    hardcoded empty — so every judged failure mode below was unreachable from
+    here while the judged tally was always 0/0 in practice too. An offline judge
+    makes those reachable, so they became cases (Rule 13).
+    """
     rows = []
     for i in range(max(n for _, n in arms.values())):
         row = {"label": f"Q{i + 1}", "removed": False, "arms": {}}
@@ -1108,8 +1515,18 @@ def _fake_run(arms):
             if i < n:
                 row["arms"][arm] = {"correct": i < ok, "fetch_calls": []}
         rows.append(row)
-    return {"payloads": [{"payload": "fake.json", "graded": rows, "judged": [],
-                          "stored_has_handles": False}]}
+
+    judged_rows = []
+    if judged:
+        for i in range(max(n for _, n in judged.values())):
+            row = {"label": f"J{i + 1}", "arms": {}}
+            for arm, (ok, n) in judged.items():
+                if i < n:
+                    row["arms"][arm] = {"same_as_raw": i < ok, "fetch_calls": []}
+            judged_rows.append(row)
+
+    return {"payloads": [{"payload": "fake.json", "graded": rows,
+                          "judged": judged_rows, "stored_has_handles": False}]}
 
 
 def self_test():
@@ -1128,16 +1545,16 @@ def self_test():
     import contextlib
     import io
 
-    def verdict(arms):
+    def verdict(arms, judged=None):
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
-            code = summarise(_fake_run(arms), tuple(arms))
+            code = summarise(_fake_run(arms, judged), tuple(arms))
         return code, buffer.getvalue()
 
     failures = []
 
-    def expect(name, arms, code, must_say=None, must_not_say=None):
-        got, text = verdict(arms)
+    def expect(name, arms, code, must_say=None, must_not_say=None, judged=None):
+        got, text = verdict(arms, judged)
         if got != code:
             failures.append(f"{name}: expected exit {code}, got {got}")
         if must_say and must_say not in text:
@@ -1174,7 +1591,37 @@ def self_test():
     if "JUDGED gap" in text:
         failures.append("judged: a 0/0 tally must not print a gap or a verdict")
 
-    print(f"verdict self-test: {6 - len(failures)}/6 cases hold")
+    # The judged half, now that an offline judge can actually fill it. Each of
+    # these is the graded half's own history repeated one column over, which is
+    # the argument for writing them before the first judged run rather than
+    # after the first judged surprise.
+
+    # It reports at all, and a level judged half passes.
+    expect("judged level", {"raw": (10, 10), "compressed": (10, 10)}, 0,
+           judged={"raw": (4, 4), "compressed": (4, 4)},
+           must_say="JUDGED gap")
+
+    # JUDGED_ALLOWED_GAP is 1, so one behind is noise and two is a regression.
+    expect("judged two behind", {"raw": (10, 10), "compressed": (10, 10)}, 1,
+           judged={"raw": (4, 4), "compressed": (2, 4)},
+           must_say="THRESHOLDS NOT MET")
+
+    # The one that made this worth writing: if raw never records same_as_raw,
+    # its judged_ok is 0, every gap goes negative, and every arm PASSes on a
+    # comparison against nothing. Rule 1 in the judged column.
+    expect("raw judged on nothing", {"raw": (10, 10), "compressed": (10, 10)}, 2,
+           judged={"raw": (0, 0), "compressed": (4, 4)},
+           must_say="denominators")
+
+    # And the direction that actually happened, which the case above does not
+    # cover and which shipped green for one commit: the judge ruled on the
+    # controls and none of the real tasks, so raw was judged and no other arm
+    # was. It printed "JUDGED not measured" and exited 0.
+    expect("only raw was judged", {"raw": (10, 10), "compressed": (10, 10)}, 2,
+           judged={"raw": (4, 4), "compressed": (0, 0)},
+           must_say="never judged")
+
+    print(f"verdict self-test: {10 - len(failures)}/10 cases hold")
     for line in failures:
         print(f"  FAIL  {line}")
     return 1 if failures else 0
@@ -1260,6 +1707,15 @@ def main():
                              "of calling an API; anything can then read them")
     parser.add_argument("--grade", metavar="DIR",
                         help="score the answers written under DIR/answers/")
+    parser.add_argument("--emit-judge", metavar="RUNFILE",
+                        help="write blinded comparison tasks for the judged "
+                             "questions in RUNFILE; --out names where")
+    parser.add_argument("--out", metavar="DIR",
+                        help="where --emit-judge writes "
+                             "(default <repo>/data/judge_tasks)")
+    parser.add_argument("--judge-in", metavar="DIR",
+                        help="fold the verdicts under DIR/judge_answers/ back "
+                             "into the run file they came from, and re-summarise")
     parser.add_argument("--regrade", metavar="RUNFILE",
                         help="re-grade a saved run without spending anything")
     args = parser.parse_args()
@@ -1272,20 +1728,30 @@ def main():
         return self_test()
 
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if args.pilot:
-        paths = [os.path.join(repo, "data/samples/github_issues.json")]
-    elif args.payload:
-        paths = [p if os.path.sep in p
-                 else os.path.join(repo, "data/samples", p if p.endswith(".json")
-                                   else p + ".json")
-                 for p in args.payload]
-    else:
-        paths = sorted(
-            os.path.join(repo, "data/samples", f)
-            for f in os.listdir(os.path.join(repo, "data/samples"))
-            if f.endswith(".json"))
-
     arms_wanted = tuple(a for a in ARMS if not args.arm or a in args.arm)
+
+    # Resolved on demand, not up front.
+    #
+    # This was an unconditional listdir of data/samples — which is gitignored, so
+    # on a fresh clone every mode died with FileNotFoundError before reaching its
+    # own code, including the modes whose entire point is that they need nothing.
+    # --self-test was already hoisted above it for exactly that reason and the
+    # comment saying so sat six lines below the trap (review, 2026-09-12).
+    def sample_paths():
+        if args.pilot:
+            return [os.path.join(repo, "data/samples/github_issues.json")]
+        if args.payload:
+            return [p if os.path.sep in p
+                    else os.path.join(repo, "data/samples",
+                                      p if p.endswith(".json") else p + ".json")
+                    for p in args.payload]
+        samples = os.path.join(repo, "data/samples")
+        if not os.path.isdir(samples):
+            print(f"\nno payloads: {samples} does not exist. It is gitignored — "
+                  "it holds real API responses.", file=sys.stderr)
+            raise SystemExit(2)
+        return sorted(os.path.join(samples, f) for f in os.listdir(samples)
+                      if f.endswith(".json"))
 
     if NOT_ASKED:
         print("not asked, and why:")
@@ -1299,16 +1765,26 @@ def main():
 
     if args.dry_run:
         print()
-        estimate(paths, arms_wanted, not args.no_judge)
+        estimate(sample_paths(), arms_wanted, not args.no_judge)
         return 0
 
     # Both offline modes come before the SDK import and the key check on
     # purpose: neither needs a network, an account or a cent, which is the
     # entire reason they exist.
     if args.emit:
-        return emit(paths, arms_wanted, args.emit, not args.no_judge)
+        return emit(sample_paths(), arms_wanted, args.emit, not args.no_judge)
     if args.grade:
         return grade(args.grade, arms_wanted)
+
+    # The other half of the same idea, and the reason the judged column stopped
+    # reading "not measured" without anything being bought: --emit has been
+    # collecting the comprehension answers all along and --grade stored them and
+    # scored nothing. These two turn them into a verdict.
+    if args.emit_judge:
+        out_dir = args.out or os.path.join(repo, "data", "judge_tasks")
+        return emit_judge(args.emit_judge, out_dir)
+    if args.judge_in:
+        return ingest_judgements(args.judge_in, arms_wanted)
 
     try:
         from google import genai
@@ -1326,6 +1802,7 @@ def main():
               f"{ANSWER_MODEL}. Recorded in the run file.")
         ANSWER_MODEL = args.model
 
+    paths = sample_paths()
     client = genai.Client()
     pacer = Pacer(args.rpm)
     stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")

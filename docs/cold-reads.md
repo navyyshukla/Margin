@@ -54,6 +54,7 @@ even which arm it is. That last exclusion matters as much as the others.
 | [2026-09-11](cold-reads/2026-09-11.md) | **71/72** compressed, 69/72 stored, **72/72 raw** | not asked | `#keyed`'s synthetic `_key` column is reported as if it were a field of the record |
 | [2026-09-12](cold-reads/2026-09-12.md) | 10/10 | **9/10** | nothing about the format — only that two of the *questions* fail to name a currency; `_key` fixed and the reader said which clause fixed it |
 | [2026-09-12 sweep](cold-reads/2026-09-12-sweep.md) | **75/75** compressed, 73/75 stored, 75/75 raw | not asked | the stored arm miscounts the same two questions as read #5, with a different reader — counting, demonstrated twice |
+| [2026-09-12 judge](cold-reads/2026-09-12-judge.md) | **16/16** judged, every arm | not asked | the judged half measured for the first time — and the first pass was worthless until controls showed the judge could say *different* |
 
 ## Read #5 is a different instrument, and the table above flattens that
 

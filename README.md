@@ -81,12 +81,15 @@ here using the `*_url` convention — where it is the largest single contributor
   dropping stage kept every field a question needs; they cannot see the table
   format, because the round-trip check above them already proved it exact. So
   `src/eval_model.py` puts the documents to a reader that has never seen this
-  repo: **raw 75/75, compressed 75/75, stored 73/75** across eight payloads. The
+  repo: **raw 75/75, compressed 75/75, stored 73/75** across eight payloads, and
+  the 16 comprehension questions are judged too — **16/16 on every arm**, by a
+  judge that passed 16 of 16 controls including 8 it had to call *different*. The
   compressed arm is exact — `#keyed`'s `_key` column stopped being reported as
   data once the legend said outright that it is not a field. The stored arm's two
   misses are arithmetic on a column that holds no handle, they are the same two
-  as the previous run, and the run fails its own bar because of them. The 16
-  comprehension questions still need a judge. `docs/status.md` has the rest,
+  as the previous run, and the run fails its own bar because of them. The judge
+  shares a model family with the answerer, which is the weaker instrument and is
+  said so in `docs/cold-reads/2026-09-12-judge.md`. `docs/status.md` has the rest,
   including what that leaves unproven.
 - **Readable by a model, not just by a parser.** The document explains its own
   encodings, and that claim is checked by giving it to a model with no access to

@@ -176,7 +176,11 @@ def run(data, checks):
             print(f"        present in raw:        {in_raw}")
             print(f"        present in compressed: {in_compressed}")
 
-    print("\nMANUAL — needs a human or an LLM, not checked here")
+    # Not checked HERE, and no longer unchecked anywhere: src/eval_model.py
+    # asks these of a reader and judges the answers against the raw arm's own
+    # (16/16 on every arm, 2026-09-12). This line said "needs a human or an LLM"
+    # for as long as that was true and for a while after it stopped being.
+    print("\nMANUAL — judged by src/eval_model.py, not by this gate")
     for label in checks.MANUAL_QUESTIONS:
         print(f"  ----  {label}")
 
