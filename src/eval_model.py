@@ -1004,6 +1004,25 @@ ANSWER B:
 """
 
 
+def answer_text(record):
+    """What a reader actually said, from either path's record shape.
+
+    The API path stores the model's output in `text` and never sets `answer`;
+    the offline path writes both. Reading only `answer` made --emit-judge emit
+    ZERO tasks for any run file the live sweep produced, and then blame the run
+    file for having no judged answers (review, 2026-09-12). One accessor, so the
+    two shapes cannot disagree again — Rule 4's shape.
+    """
+    for key in ("answer", "text"):
+        value = record.get(key)
+        if value is None:
+            continue
+        text = value if isinstance(value, str) else json.dumps(value, default=str)
+        if text.strip() and text.strip() not in ("null", '""'):
+            return text
+    return ""
+
+
 def _judge_pairs(out):
     """Every (payload, label, arm) in a run file that a judge could rule on.
 
@@ -1014,12 +1033,12 @@ def _judge_pairs(out):
     for payload in out["payloads"]:
         for row in payload.get("judged", []):
             raw = row["arms"].get("raw")
-            if not raw or not str(raw.get("answer") or "").strip():
+            if not raw or not answer_text(raw):
                 continue
             for arm, rec in row["arms"].items():
                 if arm == "raw" or rec.get("by_construction"):
                     continue
-                if not str(rec.get("answer") or "").strip():
+                if not answer_text(rec):
                     continue
                 yield payload["payload"], row["label"], arm, raw, rec
 
@@ -1043,10 +1062,9 @@ def _control_pairs(out, rng):
     """
     controls = []
     for payload in out["payloads"]:
-        answers = [(row["label"], row["arms"]["raw"].get("answer"))
+        answers = [(row["label"], answer_text(row["arms"]["raw"]))
                    for row in payload.get("judged", [])
-                   if row["arms"].get("raw")
-                   and str(row["arms"]["raw"].get("answer") or "").strip()]
+                   if row["arms"].get("raw") and answer_text(row["arms"]["raw"])]
         if not answers:
             continue
         label, text = answers[0]
@@ -1087,10 +1105,19 @@ def emit_judge(run_file, out_dir):
         return 2
     os.makedirs(answers_dir, exist_ok=True)
 
+    # Stale tasks from a previous emit are removed, not left beside the new
+    # ones. A judge told to answer every judge_*.md in the directory would
+    # otherwise answer tasks from a different run; _judge_truth.json does not
+    # list them, so the verdicts are dropped without a word and the judging is
+    # silently wasted (review, 2026-09-12).
+    for stale in sorted(os.listdir(out_dir)):
+        if stale.startswith("judge_") and stale.endswith(".md"):
+            os.remove(os.path.join(out_dir, stale))
+
     # Seeded so a re-emit of the same run file produces the same blinding. A
     # judge task that silently changes sides between emits would make two runs
     # of "the same" comparison not comparable.
-    rng = random.Random(run_file)
+    rng = random.Random(os.path.abspath(run_file))
 
     # Real pairs and controls, shuffled together and named by number.
     #
@@ -1110,7 +1137,7 @@ def emit_judge(run_file, out_dir):
         name = f"judge_{number:03d}"
         reference_first = rng.random() < 0.5
         if item["kind"] == "real":
-            sides = (item["raw"].get("answer"), item["rec"].get("answer"))
+            sides = (answer_text(item["raw"]), answer_text(item["rec"]))
         else:
             sides = (item["first"], item["second"])
         first, second = sides if reference_first else (sides[1], sides[0])
@@ -1173,7 +1200,13 @@ def ingest_judgements(task_dir, arms_wanted):
             given = json.load(handle)
         if not isinstance(given, dict) or "same" not in given:
             return None, "no verdict in the file"
-        return bool(given["same"]), str(given.get("why", ""))[:500]
+        # Strictly a JSON boolean. `bool(given["same"])` folded {"same": "false"}
+        # in as True — plausible output from something writing JSON by hand, and
+        # the whole design rests on trusting hand-written verdict files
+        # (review, 2026-09-12).
+        if not isinstance(given["same"], bool):
+            return None, f"'same' is {given['same']!r}, not true or false"
+        return given["same"], str(given.get("why", ""))[:500]
 
     # The controls first, and nothing is written if they fail.
     #
@@ -1183,26 +1216,41 @@ def ingest_judgements(task_dir, arms_wanted):
     # real result or a judge that cannot say "different", and there was no way
     # to tell. Now there is, and a judge that fails its own controls produces no
     # judged number at all rather than a flattering one.
+    # Unanswered and answered-wrong are different states and used to be one.
+    # Running this before the judge had finished printed "JUDGE REJECTED — 2 of
+    # 2 controls failed" over "a judge that cannot rule correctly cannot be
+    # trusted", which is a false accusation against a judge that was simply
+    # still working (review, 2026-09-12).
     controls = [t for t in key["tasks"] if t["kind"] == "control"]
     control_failures = []
+    control_unanswered = []
     for task in controls:
         same, why = verdict_for(task["task"])
         if same is None:
-            control_failures.append(f"{task['task']}: {why}")
+            control_unanswered.append(f"{task['task']}: {why}")
         elif same != task["expect"]:
             control_failures.append(
                 f"{task['task']}: expected "
                 f"{'same' if task['expect'] else 'different'}, judge said "
                 f"{'same' if same else 'different'} ({why[:120]})")
 
-    if controls and control_failures:
+    if control_failures:
         print(f"\nJUDGE REJECTED — {len(control_failures)} of {len(controls)} "
-              f"control(s) failed:")
+              f"control(s) were answered WRONGLY:")
         for line in control_failures:
             print(f"  {line}")
         print("\nNo judged verdict was written. A judge that cannot rule "
               "correctly on pairs whose answer was known in advance cannot be "
               "trusted on the pairs whose answer is the point (Rule 14).")
+        return 2
+    if control_unanswered:
+        print(f"\nINCOMPLETE — {len(control_unanswered)} of {len(controls)} "
+              f"control(s) have no verdict yet:")
+        for line in control_unanswered[:8]:
+            print(f"  {line}")
+        print("\nNothing was written. This is a judging pass that has not "
+              "finished, not a judge that failed — run it again once every "
+              "control has a verdict.")
         return 2
     if not controls:
         print("\nWARNING: this key has no controls, so nothing has shown this "
@@ -1216,7 +1264,7 @@ def ingest_judgements(task_dir, arms_wanted):
     for payload in out["payloads"]:
         for row in payload.get("judged", []):
             raw = row["arms"].get("raw")
-            if raw is not None and str(raw.get("answer") or "").strip():
+            if raw is not None and answer_text(raw):
                 # Raw is trivially the same as itself, and saying so is load
                 # bearing: summarise() counts raw's judged_ok as the reference
                 # every gap is measured from, so leaving it unset makes every
@@ -1248,8 +1296,21 @@ def ingest_judgements(task_dir, arms_wanted):
                         rec["same_as_raw"] = source["same_as_raw"]
                         rec["judge_note"] = source.get("judge_note", "")
 
+    # Nothing folded, nothing stamped. OFFLINE_JUDGE's own docstring says a run
+    # file must never imply a model that did not run it, and writing the stamp
+    # unconditionally did exactly that: a pass that folded zero verdicts left the
+    # file claiming a judge and every raw record claiming same_as_raw
+    # (review, 2026-09-12).
+    if not verdicts:
+        print("\nno verdicts folded — the run file was left untouched.")
+        if missing:
+            print(f"  {len(missing)} task(s) still unanswered: "
+                  f"{', '.join(missing[:8])}{' ...' if len(missing) > 8 else ''}")
+        return 2
+
     out["judge_model"] = OFFLINE_JUDGE
-    out["judge_controls"] = {"n": len(controls), "failed": 0}
+    out["judge_controls"] = {"n": len(controls), "failed": 0,
+                             "gated": bool(controls)}
     with open(key["run_file"], "w", encoding="utf-8") as handle:
         json.dump(out, handle, indent=2, default=str)
 
@@ -1317,8 +1378,22 @@ def inconclusive_reasons(tally, arms_wanted):
         #    needed guarding. Now a judge pass that covered three payloads out of
         #    eight would print a clean JUDGED gap off a third of the data —
         #    which is reason 2 again, wearing the other half's clothes.
+        #
+        # 5. And reason 3 over the same half, which the first version of this
+        #    missed by writing `if judged_n and ...` — the short-circuit skipped
+        #    exactly the case that actually happens. A judge that ruled on the
+        #    controls and none of the real tasks left raw at 16/16 and every
+        #    other arm at 0/0, and the run printed "JUDGED not measured" and
+        #    exited 0 "within the stated thresholds" (review, 2026-09-12). The
+        #    graded half has had this guard since the review before last; the
+        #    judged half shipped without it for one commit.
         judged_n = tally[arm]["judged_n"]
-        if judged_n and judged_n != raw["judged_n"]:
+        if raw["judged_n"] and not judged_n:
+            reasons.append(
+                f"raw was judged on {raw['judged_n']} questions and the {arm} arm "
+                f"on none — it was never judged, so its absence of a gap is an "
+                f"absence, not a result")
+        elif judged_n and judged_n != raw["judged_n"]:
             reasons.append(
                 f"the {arm} arm was judged on {judged_n} questions against raw's "
                 f"{raw['judged_n']} — different denominators, so the judged gap "
@@ -1538,7 +1613,15 @@ def self_test():
            judged={"raw": (0, 0), "compressed": (4, 4)},
            must_say="denominators")
 
-    print(f"verdict self-test: {9 - len(failures)}/9 cases hold")
+    # And the direction that actually happened, which the case above does not
+    # cover and which shipped green for one commit: the judge ruled on the
+    # controls and none of the real tasks, so raw was judged and no other arm
+    # was. It printed "JUDGED not measured" and exited 0.
+    expect("only raw was judged", {"raw": (10, 10), "compressed": (10, 10)}, 2,
+           judged={"raw": (4, 4), "compressed": (0, 0)},
+           must_say="never judged")
+
+    print(f"verdict self-test: {10 - len(failures)}/10 cases hold")
     for line in failures:
         print(f"  FAIL  {line}")
     return 1 if failures else 0
@@ -1628,7 +1711,8 @@ def main():
                         help="write blinded comparison tasks for the judged "
                              "questions in RUNFILE; --out names where")
     parser.add_argument("--out", metavar="DIR",
-                        help="where --emit-judge writes (default beside the run)")
+                        help="where --emit-judge writes "
+                             "(default <repo>/data/judge_tasks)")
     parser.add_argument("--judge-in", metavar="DIR",
                         help="fold the verdicts under DIR/judge_answers/ back "
                              "into the run file they came from, and re-summarise")
@@ -1644,20 +1728,30 @@ def main():
         return self_test()
 
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if args.pilot:
-        paths = [os.path.join(repo, "data/samples/github_issues.json")]
-    elif args.payload:
-        paths = [p if os.path.sep in p
-                 else os.path.join(repo, "data/samples", p if p.endswith(".json")
-                                   else p + ".json")
-                 for p in args.payload]
-    else:
-        paths = sorted(
-            os.path.join(repo, "data/samples", f)
-            for f in os.listdir(os.path.join(repo, "data/samples"))
-            if f.endswith(".json"))
-
     arms_wanted = tuple(a for a in ARMS if not args.arm or a in args.arm)
+
+    # Resolved on demand, not up front.
+    #
+    # This was an unconditional listdir of data/samples — which is gitignored, so
+    # on a fresh clone every mode died with FileNotFoundError before reaching its
+    # own code, including the modes whose entire point is that they need nothing.
+    # --self-test was already hoisted above it for exactly that reason and the
+    # comment saying so sat six lines below the trap (review, 2026-09-12).
+    def sample_paths():
+        if args.pilot:
+            return [os.path.join(repo, "data/samples/github_issues.json")]
+        if args.payload:
+            return [p if os.path.sep in p
+                    else os.path.join(repo, "data/samples",
+                                      p if p.endswith(".json") else p + ".json")
+                    for p in args.payload]
+        samples = os.path.join(repo, "data/samples")
+        if not os.path.isdir(samples):
+            print(f"\nno payloads: {samples} does not exist. It is gitignored — "
+                  "it holds real API responses.", file=sys.stderr)
+            raise SystemExit(2)
+        return sorted(os.path.join(samples, f) for f in os.listdir(samples)
+                      if f.endswith(".json"))
 
     if NOT_ASKED:
         print("not asked, and why:")
@@ -1671,14 +1765,14 @@ def main():
 
     if args.dry_run:
         print()
-        estimate(paths, arms_wanted, not args.no_judge)
+        estimate(sample_paths(), arms_wanted, not args.no_judge)
         return 0
 
     # Both offline modes come before the SDK import and the key check on
     # purpose: neither needs a network, an account or a cent, which is the
     # entire reason they exist.
     if args.emit:
-        return emit(paths, arms_wanted, args.emit, not args.no_judge)
+        return emit(sample_paths(), arms_wanted, args.emit, not args.no_judge)
     if args.grade:
         return grade(args.grade, arms_wanted)
 
@@ -1708,6 +1802,7 @@ def main():
               f"{ANSWER_MODEL}. Recorded in the run file.")
         ANSWER_MODEL = args.model
 
+    paths = sample_paths()
     client = genai.Client()
     pacer = Pacer(args.rpm)
     stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
