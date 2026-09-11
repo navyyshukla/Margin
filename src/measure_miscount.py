@@ -37,7 +37,7 @@ column beside it would be new information about a decision already made.
     compressed      the control that has passed twice        3 questions, no tool
     stored          the arm that has failed twice, as it ships
     stored-bare     the same document, `\\@0004` not `\\@0004[345t]`
-    stored-full     the stored document, the sweep's 15 questions, still no tool
+    stored-full     the stored document, the sweep's 15 + D1, still no tool
     stored-fetch    the same again WITH the fetch tool — the sweep, reproduced
 
 `stored-bare` is produced by `render(parse(stored))` — the shipped reader and the
@@ -53,7 +53,7 @@ arm holds the same 32 stored cells and they differ only in how the handle is
 written. Same "one variable at a time" rule `measure_store.py` states.
 
 The last two arms exist because the first three did not have that discipline.
-They dropped the fetch tool AND cut fifteen questions to three at the same time,
+They dropped the fetch tool AND cut sixteen questions to three at the same time,
 so a clean result could not say which change mattered — the one-variable sin this
 file preaches, committed in its own design. `stored-full` puts the questions back
 without the tool; `stored-fetch` puts the tool back too and is the sweep exactly.
@@ -104,6 +104,13 @@ from tokens import token_count
 
 SAMPLE = "data/samples/github_issues.json"
 
+# Where --emit writes by default and where the FileStore lives. Named here, and
+# named in .gitignore, because the two disagreeing is how generated tasks (which
+# carry a copy of the payload and the answer key) end up in a tracked directory
+# (review, 2026-09-12).
+DEFAULT_TASK_DIR = "data/miscount_tasks"
+STORE_ROOT = "data/.miscount-store"
+
 # Readers per arm. Five rather than one because one per arm is exactly what left
 # this ambiguous twice, and rather than fifty because these are read by hand-
 # launched subagents. It is a screening experiment: enough to point at a cause,
@@ -113,7 +120,7 @@ READERS_PER_ARM = 5
 ARMS = ("compressed", "stored", "stored-bare", "stored-full", "stored-fetch")
 
 # The first three arms ask three questions. The sweep that produced the finding
-# asked fifteen, so "no fetch tool" and "a much shorter task" moved together and
+# asked fifteen (sixteen here, since D1 rides along), so "no fetch tool" and "a much shorter task" moved together and
 # a clean run of the first three cannot tell them apart — the same one-variable
 # sin this file preaches against, committed in the experiment's own design.
 #
@@ -123,8 +130,8 @@ ARMS = ("compressed", "stored", "stored-bare", "stored-full", "stored-fetch")
 # answered well. Q5, Q6 and D1 are still what decides anything.
 FULL_ARM = "stored-full"
 
-# And `stored-fetch` is the sweep itself: the same document, the same fifteen
-# questions, and the fetch tool put back. It was added after the first four arms
+# And `stored-fetch` is the sweep itself: the same document, the same questions
+# (its fifteen, plus D1), and the fetch tool put back. It was added after the first four arms
 # came back 20/20 and left exactly one difference from the run that found the
 # miscount. An experiment that narrows a cause to one suspect and then stops
 # short of testing it has not finished.
@@ -198,8 +205,7 @@ def build_arms(path):
         raw_text = handle.read()
     data = json.loads(raw_text)
 
-    root = os.path.join(os.path.dirname(os.path.abspath(path)), ".miscount-store")
-    backing = store_module.FileStore(root)
+    backing = store_module.FileStore(STORE_ROOT)
 
     compressed, _ = compress_json(data, original_text=raw_text)
     stored, _ = compress_json(data, original_text=raw_text, store=backing)
@@ -213,11 +219,24 @@ def build_arms(path):
     # not use. Leaving it would confound "no size on the handle" with "the legend
     # describes something absent", and the second is a worse document than either
     # arm is meant to be.
-    bare = bare.replace(
-        r"\@nnnn[Nt] = this value is NOT in this document; N is what it costs "
-        r"in tokens.",
-        r"\@nnnn = this value is NOT in this document.",
-    )
+    #
+    # The phrase is taken from render.LEGEND_ENTRIES rather than copied, and the
+    # replacement is ASSERTED to have happened. A copied literal that render.py
+    # later rewords makes this a silent no-op, and the arm then ships exactly the
+    # confound the paragraph above says it is avoiding — with nothing to catch it,
+    # since _differs_only_in_handles deliberately ignores the legend line
+    # (review, 2026-09-12).
+    sized_entry = next(text for marker, text in render.LEGEND_ENTRIES
+                       if marker == render.HANDLE_PREFIX)
+    bare_entry = r"\@nnnn = this value is NOT in this document. Resolve with " \
+                 r"the margin `fetch` tool: fetch(document=<id on the #store " \
+                 r"line>, ids=[nnnn, ...])"
+    if sized_entry not in bare:
+        raise AssertionError(
+            "the handle legend entry is not in the rendered document as "
+            "render.LEGEND_ENTRIES spells it; the stored-bare arm would ship a "
+            "legend promising [Nt] over a document that has none")
+    bare = bare.replace(sized_entry, bare_entry)
 
     # stored-full and stored-fetch are the same bytes as stored. What differs is
     # the question set and whether a fetch tool is offered, not the document —
@@ -279,8 +298,22 @@ def emit(out_dir):
     data, arms, store_root = build_arms(SAMPLE)
     asked, truth = questions_and_truth(data)
 
+    # Refused rather than merged: every emit writes a fresh _truth.json, and
+    # answers left from a previous emit would be scored against this one's key
+    # with nothing to notice the mismatch. The documents happen to be
+    # deterministic today — the #store id is content-addressed and re-emitting
+    # produces the same bytes — but "happens to be" is not a property to hang a
+    # measurement on (review, 2026-09-12).
+    answers_dir = os.path.join(out_dir, "answers")
+    if os.path.isdir(answers_dir) and os.listdir(answers_dir):
+        print(f"refusing to emit: {answers_dir} already holds answers.",
+              file=sys.stderr)
+        print("Move or delete them first — they belong to the previous key.",
+              file=sys.stderr)
+        return 2
+
     os.makedirs(out_dir, exist_ok=True)
-    os.makedirs(os.path.join(out_dir, "answers"), exist_ok=True)
+    os.makedirs(answers_dir, exist_ok=True)
 
     # The fetch arm's only tool, written the way eval_model.emit writes it and
     # importing the same two templates rather than retyping them: this arm is
@@ -339,17 +372,32 @@ def grade(out_dir):
         truth = json.load(handle)
 
     misses = {}
-    print(f"{'arm':<14}{'reader':>7}{'Q5':>8}{'Q6':>8}{'D1':>8}")
+    answered = {}
+    fetches = {}
+    print(f"{'arm':<14}{'reader':>7}{'Q5':>8}{'Q6':>8}{'D1':>8}{'fetches':>9}")
     for arm in ARMS:
         misses[arm] = 0
+        answered[arm] = 0
+        fetches[arm] = []
         for replicate in range(1, READERS_PER_ARM + 1):
             path = os.path.join(out_dir, "answers", f"{arm}__{replicate}.json")
             if not os.path.exists(path):
-                print(f"{arm:<14}{replicate:>7}{'no answer file':>26}")
+                print(f"{arm:<14}{replicate:>7}{'no answer file':>33}")
                 continue
             with open(path, encoding="utf-8") as handle:
                 given = json.load(handle)
 
+            # A reader that replied with something other than an object is an
+            # unusable answer, not a passing one. D1 asks for an array and the
+            # task header shows one example shape, so a bare array is a
+            # plausible reply and used to abort the whole grade mid-table
+            # (review, 2026-09-12).
+            if not isinstance(given, dict):
+                print(f"{arm:<14}{replicate:>7}"
+                      f"{'not a JSON object — unusable':>33}")
+                continue
+
+            answered[arm] += 1
             verdicts = {key: same_json(truth[key], given.get(key))
                         for key in ("Q5", "Q6", "D1")}
             # A reader "misses" on the two questions the sweep scored. D1 is
@@ -359,13 +407,45 @@ def grade(out_dir):
             # same as one that misread a row.
             if not (verdicts["Q5"] and verdicts["Q6"]):
                 misses[arm] += 1
+            if arm == FETCH_ARM:
+                fetches[arm].append(given.get("_fetches"))
             print(f"{arm:<14}{replicate:>7}"
                   + "".join(f"{'ok' if verdicts[k] else 'MISS':>8}"
-                            for k in ("Q5", "Q6", "D1")))
+                            for k in ("Q5", "Q6", "D1"))
+                  + f"{given.get('_fetches', '') if arm == FETCH_ARM else '':>9}")
 
     print()
     for arm in ARMS:
-        print(f"  {arm:<14} {misses[arm]}/{READERS_PER_ARM} reader(s) missed Q5 or Q6")
+        print(f"  {arm:<14} {misses[arm]}/{answered[arm]} reader(s) missed Q5 or Q6")
+
+    # The bar is stated out of READERS_PER_ARM, so applying it to a partial arm
+    # compares a real numerator against an imagined denominator. A reader that
+    # crashed, timed out or was never launched used to read as a clean pass and
+    # could flip the verdict outright (review, 2026-09-12) — the same shape as
+    # Rule 2, one level down: a run that can silently score fewer readers than it
+    # claims must say so rather than report a number about the wrong thing.
+    short = {arm: answered[arm] for arm in ARMS if answered[arm] < READERS_PER_ARM}
+    if short:
+        print()
+        print("INCONCLUSIVE — not every reader reported, so the bar cannot be "
+              "applied out of {0}:".format(READERS_PER_ARM))
+        for arm, count in short.items():
+            print(f"  {arm:<14} {count}/{READERS_PER_ARM} usable answer(s)")
+        return 2
+
+    # Said unconditionally and before any verdict, because the fetch arm carries
+    # the only interesting misses in this experiment and used to be reported
+    # only inside one branch of one outcome (review, 2026-09-12).
+    fetch_free = sum(misses[arm] for arm in ARMS
+                     if arm not in (FETCH_ARM, "compressed"))
+    print()
+    print(f"  fetch arm: {misses[FETCH_ARM]}/{READERS_PER_ARM} missed, against "
+          f"{fetch_free} across the {len(ARMS) - 2} stored arms that could not "
+          f"fetch. Fetches reported: {fetches[FETCH_ARM]}.")
+    if misses[FETCH_ARM] and not any(fetches[FETCH_ARM]):
+        print("  WARNING: the fetch arm missed but reports no fetches at all. "
+              "Nothing here supports a claim about HAVING fetched, only about "
+              "having been offered a tool.")
 
     print()
     if misses["compressed"] > MAX_CONTROL_MISSES:
@@ -390,9 +470,8 @@ def grade(out_dir):
               f"{misses['stored-bare']}/{READERS_PER_ARM}, and with stored at "
               f"{misses['stored']} there was nothing for it to separate.")
 
-        fetch_free = sum(misses[arm] for arm in ARMS if arm != FETCH_ARM)
         print()
-        if misses[FETCH_ARM] and not fetch_free:
+        if misses[FETCH_ARM] and not fetch_free and not misses["compressed"]:
             print(f"  EVERY MISS IN THIS RUN IS IN THE FETCH ARM: "
                   f"{misses[FETCH_ARM]}/{READERS_PER_ARM} there against 0 in the "
                   f"{len(ARMS) - 1} arms that could not fetch "
@@ -405,6 +484,11 @@ def grade(out_dir):
             print("  The fetch arm missed nothing either. Nothing in this run "
                   "reproduces the sweep's finding, which makes the sweep's two "
                   "misses reader variance until something reproduces them.")
+        else:
+            print(f"  The fetch arm missed {misses[FETCH_ARM]} and the non-fetch "
+                  f"stored arms missed {fetch_free}, so the misses are not "
+                  f"confined to the arm that could fetch. Read the table above "
+                  f"rather than any one-line conclusion.")
         return 2
     if misses["stored-bare"] <= MAX_BARE_MISSES:
         print(f"[Nt] IS IMPLICATED — stored missed {misses['stored']}, "
@@ -496,8 +580,10 @@ def main(argv):
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--dry-run", action="store_true",
                        help="build the arms and check them; no readers, no spend")
-    group.add_argument("--emit", metavar="DIR", help="write the reading tasks")
-    group.add_argument("--grade", metavar="DIR", help="score the answers")
+    group.add_argument("--emit", metavar="DIR", nargs="?", const=DEFAULT_TASK_DIR,
+                       help=f"write the reading tasks (default {DEFAULT_TASK_DIR})")
+    group.add_argument("--grade", metavar="DIR", nargs="?", const=DEFAULT_TASK_DIR,
+                       help=f"score the answers (default {DEFAULT_TASK_DIR})")
     args = parser.parse_args(argv)
 
     if args.dry_run:
