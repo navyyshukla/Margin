@@ -106,3 +106,31 @@ MANUAL_QUESTIONS = [
     "P12 what kind of Pokemon is this and what are its abilities",
     "P13 which games does it appear in",
 ]
+
+# Prose for src/eval_model.py; see the note in checks_github_issues.py for why
+# each one states the answer shape.
+#
+# P8 has no entry on purpose: its answer is all 46 version names (603
+# characters), which is transcription rather than comprehension. P13 asks the
+# same thing of a reader in prose and IS asked, which is the useful half.
+# Listed as not-asked, with that reason, on every run.
+ASK = {
+    "P1": "What are this Pokemon's name and id? Answer as a two-element array: "
+          "[name, id].",
+    "P2": "What are its height and weight? Answer as a two-element array: "
+          "[height, weight].",
+    "P3": "What are its ability names? Answer as an array of strings, in the order "
+          "they appear.",
+    "P4": "What are its base stats? Answer as an object mapping each stat name to "
+          "its base_stat value.",
+    "P5": "What are its type names? Answer as an array of strings, in the order "
+          "they appear.",
+    "P6": "How many game_indices entries are there? Answer with a number.",
+    "P7": "What is the game_index for the version named 'red'? Answer with a number.",
+    "P9": "What are is_default, order and base_experience? Answer as a "
+          "three-element array in that order.",
+    "P10": "What is the species name?",
+    "P11": "What is the url of the species resource?",
+    "P12": "What kind of Pokemon is this, and what are its abilities?",
+    "P13": "Which games does it appear in?",
+}

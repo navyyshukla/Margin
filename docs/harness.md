@@ -1,18 +1,23 @@
 # The harness, and the rule each part enforces
 
-Seven gates and fifteen rules. Each rule exists because something got past the
+Seven gates and sixteen rules. Each rule exists because something got past the
 gates before it, and each is written down with the failure that bought it — a
 rule whose reason is forgotten is a rule someone deletes.
 
-| Gate | Asks | Needs a sample payload? |
-|---|---|---|
-| `src/property_test.py` | Does the format survive shapes nobody wrote down? | no — generates its own |
-| `src/cli_test.py` | Does the tool keep the promises the tool makes? | no — generates its own |
-| `src/mcp_test.py` | Does the fetch tool resolve what the document promises? | no — builds its own |
-| `src/mutation_test.py` | Can the other gates still fail? | no — mutates the source |
-| `src/eval_harness.py` | Do the answers survive on the payloads I have? | yes |
-| `.claude/hooks/run_eval.sh` | Did Claude's last edit break any of them? | no |
-| `.githooks/pre-commit` | Is this commit allowed to exist? | no |
+| Gate | Asks | Sample payload? | Runs |
+|---|---|---|---|
+| `src/property_test.py` | Does the format survive shapes nobody wrote down? | no — generates its own | edit + commit |
+| `src/cli_test.py` | Does the tool keep the promises the tool makes? | no — generates its own | edit + commit |
+| `src/mcp_test.py` | Does the fetch tool resolve what the document promises? | no — builds its own | edit + commit |
+| `src/eval_harness.py` | Do the answers survive on the payloads I have? | yes | edit + commit |
+| `src/mutation_test.py` | Can the other gates still fail? | no — mutates the source | **commit only** |
+| `.claude/hooks/run_eval.sh` | Did Claude's last edit break any of them? | no | every `src/*.py` edit |
+| `.githooks/pre-commit` | Is this commit allowed to exist? | no | every commit |
+
+The two cadences are 17.0s and about 62s (measured 2026-09-11, ±10% run to run).
+`mutation_test.py` is ~45s of that and moved to commit-only on the same day; the
+reasoning is in a comment where it used to run, and it is a cadence change rather
+than a skip — nothing reaches `main` without it.
 
 Run `./.githooks/install.sh` once per clone, and **again after editing any hook** —
 hooks are copied into `.git/hooks`, not symlinked. (`core.hooksPath` is
@@ -426,3 +431,37 @@ try block**, so a store that could not be written took the whole compressor down
 rather than falling back to JSON, which is its documented contract. That is the
 argument for writing the mutation even when you are sure you already know what
 the bug was.
+
+---
+
+## Rule 16 — A check downstream of an equality assertion tests only what the assertion could not see
+
+`eval_harness.py` runs 76 PRESERVE checks, and the README described them for two
+weeks as the guarantee that answers do not move under compression. They are not
+that, and the reason is four lines above them: `run()` asserts
+`same_json(compressed, stripped)` first. Full structural equality. Every PRESERVE
+check is then a pure function of two objects already proved identical, and cannot
+fail unless the assertion above it failed first.
+
+They are not worthless — `expected` is computed on the **raw** payload and
+`actual` on the round-tripped one, so they do catch `strip_boilerplate` deleting a
+field some question needs. That is real, and it is about eight lines of coverage.
+It is not 76 questions about answer quality.
+
+**The failure this rule names is a counting error, not a testing one.** Nothing
+was broken; no check was wrong; the suite was green and deserved to be. What went
+wrong is that a number — 76 — was quoted as evidence for a claim it had no
+bearing on, and it was persuasive precisely *because* the checks were real and did
+pass. A vacuous check announces itself eventually, when a mutation survives. A
+sound check pointed at the wrong claim never does.
+
+So: **before citing a check count as evidence, name what would have to break for
+those checks to fail.** If the answer is "an assertion that already runs", the
+checks are downstream and the count belongs to that assertion, not to them.
+
+The claim itself — that a model reads a compressed document as well as a raw one —
+is still untested here. `eval_harness.py` runs against decompressed Python
+objects, so no gate in this repo has ever seen the document the way a reader does.
+`docs/status.md` PR #7 is that measurement, and it is deliberately a script rather
+than a gate: non-deterministic, network-dependent and billed, which are three
+different ways for a gate to get bypassed (Rule 12).

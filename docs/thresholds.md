@@ -117,7 +117,7 @@ at index 61, the reader had to hand-count 61 entries into an 11KB single-line
 array, said there was "no way to verify an index", and on the next question
 miscounted 58 as 57. Counting has been the weak point of all three cold reads.
 `HEADER_REPEAT_EVERY` made the identical trade at +0.3% — see
-`docs/cold-read-2026-09-09.md`.
+`docs/cold-reads/2026-09-09.md`.
 
 **One trap worth recording.** The first version of the cost model priced the
 current cells with `json.dumps`, and a `str` cell is written **bare** in the
@@ -161,9 +161,24 @@ to payloads that store nothing and carry no `#store` line at all. There is now
 one path to a document size and no second one to disagree with it. Rule 1's
 shape, on a measurement rather than an encoder.
 
-Projected 74.6% for the encoding that was chosen; the implementation landed at
-**74.4%**, the gap explained by the real `\@0001` being one character longer than
-the `@0001` that was priced.
+**Which row to quote, because getting this wrong cost four files.** The
+projection prices several handle encodings (two tables below). The one that
+shipped is `\@0001[276t]` — a per-document id **carrying its token count**, which
+is the `tokens only` row of the lure table: **73.5%**. The shipped CLI measures
+**73.7%** (2026-09-11). Two tenths of a point apart, which is as close as a model
+of a renderer gets.
+
+The row that must *not* be quoted as the result is `per-document id @0001` in the
+encoding table: **74.6%**, a bare handle with no `[Nt]`. Between 2026-09-10 and
+2026-09-11 `src/store.py`, `docs/shapes.md` and `docs/status.md` all cited it, and
+this file explained the residual gap as "the real `\@0001` being one character
+longer than the `@0001` that was priced". That explanation was wrong. The gap is
+the token-count lure, which the lure table below prices explicitly at 761 tokens
+— it was measured, printed, and then read past.
+
+Rule 5 says re-measure rather than remember. This is its sharper form: **a
+multi-row projection needs the row named at every citation**, because re-reading
+the wrong line is indistinguishable from re-measuring.
 
 ### `MAX_RESPONSE_TOKENS = 8000` (src/mcp_server.py)
 
@@ -263,13 +278,21 @@ claims to be is Rule 5 wearing a different hat.
 
 ### The handle's own encoding, measured
 
-| encoding | example | set total |
+**Bare handles, no `[Nt]` size** — a comparison *between encodings*, not a
+prediction of the shipped result. The handle that shipped carries its token count
+and measures 73.7%; read the warning above before quoting any figure here.
+
+| encoding (bare) | example | set total |
 |---|---|---:|
 | hex-4 | `@3f9a` | 74.3% |
 | hex-8 | `@3f9a2c1b` | 73.5% |
 | hex-12 | `@3f9a2c1b7e4d` | 72.8% |
 | hex-16 | `@3f9a2c1b7e4d5a6b` | 72.2% |
 | **per-document id** | `@0001` | **74.6%** |
+
+The column is internally consistent, and that is all it is for: it is what chose a
+per-document id over a hash in the document. The 1.8 points below is a difference
+between two rows of *this* table, so the correction above leaves it intact.
 
 Putting the content hash straight in the document costs **1.8 points, ~2,200
 tokens** against a short id. So the document carries a short per-document id and

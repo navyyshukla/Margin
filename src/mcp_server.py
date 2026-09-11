@@ -135,14 +135,20 @@ def _spans_matching(text, query):
     return spans
 
 
-@server.tool(
-    description=(
-        "Fetch the values behind \\@nnnn handles in a #margin/v1 document. "
-        "`document` is the id on the document's #store line; `ids` are the handle "
-        "numbers, e.g. ['0001','0004']. Pass several at once. With `query`, only "
-        "the matching parts of each value are returned."
-    )
+# Named rather than inlined in the decorator below, because there is now a second
+# caller: src/eval_model.py declares this same tool to Gemini, and a tool whose
+# description differs between the two would make the eval a measurement of a
+# prompt this project does not ship. Same reason the writer and the reader share
+# src/render.py — where two things must agree, they read from one source.
+FETCH_DESCRIPTION = (
+    "Fetch the values behind \\@nnnn handles in a #margin/v1 document. "
+    "`document` is the id on the document's #store line; `ids` are the handle "
+    "numbers, e.g. ['0001','0004']. Pass several at once. With `query`, only "
+    "the matching parts of each value are returned."
 )
+
+
+@server.tool(description=FETCH_DESCRIPTION)
 def fetch(document: str, ids: list[str], query: str | None = None) -> str:
     """Resolve handles to their stored content."""
     if not ids:

@@ -68,9 +68,12 @@ wrong version was about to become the reason not to build this.
 server + CLI wiring → cold read #4 and a model-in-the-loop eval.
 
 - [x] **Measured** (2026-09-10). `src/measure_store.py` prices every cell against
-      a handle and renders the resulting document. 41.6% → 74.4% across the set,
-      concentrated in three payloads. Numbers in `docs/shapes.md`, thresholds and
-      the handle-encoding comparison in `docs/thresholds.md`.
+      a handle and renders the resulting document. Projected 73.5% for the
+      encoding that shipped; the shipped CLI measures **73.7%** across the set
+      (re-measured 2026-09-11), concentrated in three payloads. This line said
+      74.4% until then — the projection's *bare-handle* row, not its
+      `\@0001[276t]` one. Numbers in `docs/shapes.md`, thresholds and the
+      handle-encoding comparison in `docs/thresholds.md`.
 - [x] **PR #5 — the format and the store.** `\@0001` handles, a per-document id
       with the `id -> hash` index on disk, `src/store.py`. The CLI is untouched:
       `store=None` is the default, so every existing gate still exercises the
@@ -85,14 +88,49 @@ server + CLI wiring → cold read #4 and a model-in-the-loop eval.
 - [x] **Cold read #4** (2026-09-10). 12/12. Given a handle-bearing document and
       no way to fetch, the reader said "not answerable" rather than inferring —
       the failure that would have made this stage worse than useless. The `[Nt]`
-      lure paid for itself in the same read. `docs/cold-read-2026-09-10.md`.
-- [ ] **PR #7 — the model-in-the-loop eval, and it is the important one.**
-      Everything measured so far is about *documents*. Nothing yet shows a model
-      answers as well through a handle and a fetch as it does reading the value
-      in place, and no gate can see it: `eval_harness.py` checks answers against
-      *decompressed* data, so it never exercises the decision to **call the
-      tool** — which is the entire value of the stage. Until it exists, 73.7% is
-      a claim about prompts and not about answers.
+      lure paid for itself in the same read. `docs/cold-reads/2026-09-10.md`.
+- [x] **PR #7 — the model-in-the-loop eval** (2026-09-11). `src/eval_model.py`,
+      a script rather than an eighth gate: non-deterministic, networked and
+      billable are three separate reasons a gate gets bypassed (Rule 12).
+      Three arms — raw / compressed / stored — because building it only for the
+      store would have left the 41.6% compressor permanently unmeasured.
+
+      **First result, 72 graded questions across eight payloads:**
+
+      | arm | correct |
+      |---|---|
+      | raw (reference) | **72/72** |
+      | compressed | **71/72** |
+      | stored | **69/72** |
+
+      Read by fresh Claude subagents, one per payload and arm, each given the
+      document and nothing else — the `docs/cold-reads.md` method, automated and
+      scored. The Gemini path exists and works but the free tier is ~20 requests
+      per **day** per model against ~194 for a sweep, and this project does not
+      buy quota.
+
+      **The one compressed miss is a real format defect.** Asked for the complete
+      `ethereum` record, the reader returned all 12 fields correctly plus a 13th:
+      `_key`, which is `#keyed`'s synthetic column. Nothing is lost — `decompress`
+      strips it and the round-trip gate has always passed — but a *reader* reports
+      Margin's scaffolding as data, and the legend line did not stop it. This is
+      the class of defect no gate here can see, found by a machine for the first
+      time rather than by a human cold reader. **Not yet fixed:** the fix is a
+      legibility change owing a cold read and a re-measure.
+
+      **The two stored misses are reader noise, not data loss** — verified:
+      `comments` decompresses identically in both arms (11 zeros, 31 total), no
+      `comments` cell is a handle, and the compressed arm answered both
+      correctly. One reader, one sample, arithmetic.
+
+- [ ] **Still owed, and named rather than quietly dropped:**
+      - The **16 comprehension questions are unmeasured.** They need a judge, and
+        judging is the one part with no free path.
+      - **Retrieval was exercised once**, on `jsonplaceholder`. On GitHub and HN
+        the store holds only bodies, and no *graded* question reads a body — the
+        questions that do are the comprehension ones above. So the store's
+        central claim rests on a single fetch. A graded question that requires a
+        stored value is the cheapest thing that would fix this.
 - [ ] **Deferred, and named rather than forgotten:** `margin export`/`import`
       (a document is meaningless without its index and objects, and there is no
       bundle unit); GC and `fsck` (a lost index leaks objects forever);

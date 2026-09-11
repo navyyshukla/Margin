@@ -62,16 +62,34 @@ Measured across eight APIs (tokens under `cl100k_base`, against the file as fetc
 `docs/shapes.md` explains what each shape is and why the last two are correct
 outcomes rather than gaps.
 
+Those figures are three stages, and the first one throws data away. Set-wide:
+formatting 12%, dropping link-template keys 29%, the table format 59%. The
+dropping stage fires on exactly one of the eight payloads — GitHub, the only API
+here using the `*_url` convention — where it is the largest single contributor.
+`docs/shapes.md` has the per-stage table and the list of what is gone for good.
+
 ## The rules it holds itself to
 
-- **Reversible.** `decompress(compress(x))` is verified at runtime, and a
-  transform that cannot be undone is not shipped.
+- **Reversible after one deliberate cut.** The first stage *drops* link-template
+  and opaque-ID keys — `*_url`, `node_id`, `gravatar_id` — and nothing restores
+  them, so a compressed GitHub payload cannot answer "link me to issue 37508".
+  Everything after that stage is exactly reversible, `decompress(compress(x))` is
+  verified at runtime, and a transform that cannot be undone is not shipped past
+  that line. What goes and what it costs: `docs/shapes.md`.
 - **Never worse.** If nothing helps, the input comes back unchanged.
-- **Answers must not move.** 76 questions across the eight payloads are asked
-  before and after compression; any drift fails the build.
+- **Answers must not move, and a model was finally asked.** 76 checks assert the
+  dropping stage kept every field a question needs; they cannot see the table
+  format, because the round-trip check above them already proved it exact. So
+  `src/eval_model.py` puts the documents to a reader that has never seen this
+  repo: **raw 72/72, compressed 71/72, stored 69/72** across eight payloads. The
+  one compressed miss is real and unfixed — `#keyed`'s synthetic `_key` column
+  gets reported as if it were data. The 16 comprehension questions still need a
+  judge. `docs/status.md` has the rest, including what that leaves unproven.
 - **Readable by a model, not just by a parser.** The document explains its own
   encodings, and that claim is checked by giving it to a model with no access to
-  this repo — four times so far, scored in `docs/cold-reads.md`.
+  this repo — five times so far, scored in `docs/cold-reads.md`. The fifth put
+  the same questions to the raw payload as a control, and the compressed
+  document lost one answer out of 72.
 - **Every number measured, never copied.** Including from Headroom, whose
   thresholds would reject most of the results above (`docs/thresholds.md`).
 
@@ -84,15 +102,19 @@ outcomes rather than gaps.
 | `src/compress.py` | the pipeline and its thresholds |
 | `src/table.py` | decides the table's shape; renders no text |
 | `src/tokens.py` | counting tokens, in one place |
+| `src/detect.py` | decides whether the input is JSON at all |
 | `src/render.py` | writes the document and reads it back, in one file so the two cannot drift |
 | `src/store.py` | the content store: bulk cells live here, not in the prompt |
 | `src/mcp_server.py` | the `fetch` tool — what makes Margin a tool the model calls |
 | `src/decompress.py` | the inverse |
 | `src/eval_harness.py` | asks the questions before and after |
+| `src/eval_model.py` | asks a *model* the questions — three arms, and not a gate |
 | `src/property_test.py` | generates payloads trying to break the format |
 | `src/cli_test.py` | runs the CLI as a subprocess and checks what it promises |
 | `src/mcp_test.py` | drives the MCP server as a subprocess over JSON-RPC |
 | `src/mutation_test.py` | breaks the CLI on purpose and checks that cli_test.py notices |
+| `src/checks_<payload>.py` | the expected answers for one sample, paired to it by name (eight of them) |
+| `src/measure_*.py` | one-off measurement scripts — not gates, nothing runs them but you |
 | `docs/` | the written record — `docs/README.md` is the index of which file answers what |
 
 Run `./.githooks/install.sh` once per clone. `data/samples/` is gitignored — it

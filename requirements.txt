@@ -1,2 +1,7 @@
 tiktoken
 mcp>=2.2
+# src/eval_model.py only. Not needed to compress anything — the seven gates and
+# the CLI never import it — so a clone that never runs the model eval can skip
+# it. `google-genai`, not `google-generativeai`: the latter is the older package
+# and does not have the Interactions API this uses.
+google-genai

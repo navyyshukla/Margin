@@ -90,7 +90,7 @@ ARRAY_TYPES = ("ints", "dints", "strs")
 LEGEND_ENTRIES = [
     # (what to look for, what to say). Order is the order they are printed.
     #
-    # Wording tuned by the cold read of 2026-09-08 (docs/cold-read-2026-09-08.md).
+    # Wording tuned by the cold read of 2026-09-08 (docs/cold-reads/2026-09-08.md).
     # The reader got every answer right but had to *infer* two things: that the
     # first dints token is absolute rather than a delta from zero, and that an
     # empty cell means the key is absent — which is the distinction Q4/Q10 use to

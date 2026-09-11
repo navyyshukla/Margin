@@ -7,6 +7,11 @@
 #   2. The eval harness must pass when src/*.py is staged. A compression rule
 #      that changes answers should not be committable in the first place.
 #
+# Since 2026-09-11 this is also the ONLY place mutation coverage runs. It used to
+# run on every edit too, where it was ~45s of a ~62s chain; the PostToolUse hook
+# now stops before it and says why. So a commit is the boundary that question is
+# asked at, and --no-verify is the only way past it.
+#
 # Bypass with `git commit --no-verify` if you ever genuinely need to; that
 # should feel like a deliberate act, which is the point.
 
@@ -103,6 +108,14 @@ if ! "$PYTHON" "$SRC/mutation_test.py"; then
   echo "pre-commit: a mutation survived — commit refused." >&2
   echo "  A CLI check no longer fails when its subject is broken, or the" >&2
   echo "  mutation's anchor text moved and it is now testing nothing." >&2
+  exit 1
+fi
+
+echo "pre-commit: running eval_model verdict self-test..."
+if ! "$PYTHON" "$SRC/eval_model.py" --self-test; then
+  echo "" >&2
+  echo "pre-commit: the eval verdict can no longer refuse — commit refused." >&2
+  echo "  A run with nothing to compare would print a pass. See Rule 16." >&2
   exit 1
 fi
 

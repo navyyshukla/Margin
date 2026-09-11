@@ -5,7 +5,7 @@ the data they interrogate, and mixing two payloads' questions in one file
 makes it unclear which failure belongs to which.
 
 Ground truth is computed from the raw payload at run time rather than
-hardcoded, so a re-fetched sample keeps working. See data/eval_questions.md
+hardcoded, so a re-fetched sample keeps working. See data/eval_questions_github_issues.md
 for the questions in prose, and src/eval_harness.py for how these are run.
 """
 
@@ -92,3 +92,39 @@ MANUAL_QUESTIONS = [
     "Q11 summarize #37534 in one sentence",
     "Q12 which PRs are dependency bumps, and what do they touch",
 ]
+
+# The same questions in prose, for src/eval_model.py, which asks a model rather
+# than calling the function. Keyed by the label prefix above.
+#
+# Each one states the ANSWER SHAPE ("a two-element array", "sorted
+# alphabetically"), and that is not padding. The check functions return whatever
+# Python was natural — a tuple here, a sorted list there — and the grader
+# compares with same_json against that exact value. Without the shape spelled
+# out, a model that understood the payload perfectly still fails on ordering, and
+# the run measures our prompt rather than the compression.
+ASK = {
+    "Q1": "What is the title of issue number 37508? Give the exact title string.",
+    "Q2": "What is the login of the user who opened issue number 37501?",
+    "Q3": "What are the names of the labels on issue number 37510? Answer as an "
+          "array of strings, in the order they appear.",
+    "Q4": "How many of these entries are pull requests, and how many are plain "
+          "issues? Answer as a two-element array: [pull_requests, plain_issues].",
+    "Q5": "How many entries have exactly zero comments? Answer with a number.",
+    "Q6": "What is the total number of comments across all entries? Answer with "
+          "a number.",
+    "Q7": "How many distinct user logins opened these entries? Answer with a number.",
+    "Q8": "Which entries carry the label 'Type: Bug'? Answer as an array of their "
+          "issue numbers, in the order they appear.",
+    "Q9": "Which entries were opened by the user 'dependabot[bot]'? Answer as an "
+          "array of their issue numbers, in the order they appear.",
+    "Q10": "Which entries are plain issues rather than pull requests? Answer as an "
+           "array of their issue numbers, in the order they appear.",
+    "Q11": "Summarize issue 37534 in one sentence.",
+    "Q12": "Which pull requests are dependency bumps, and what does each one touch?",
+    # The adversarial one, and the only question whose right answer DIFFERS by
+    # arm: true on the raw payload, false once strip_boilerplate has run. It is
+    # the direct test of the failure docs/shapes.md now documents — a reader
+    # inventing a link that is no longer there.
+    "Q13": "Does any user object in this data carry an avatar_url field? Answer "
+           "true or false.",
+}
