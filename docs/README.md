@@ -16,6 +16,7 @@ keeping their own copy of this mapping.
 | How do I run a cold read, and what have they found? | [`cold-reads.md`](cold-reads.md) |
 | What did one particular cold read find? | `cold-reads/YYYY-MM-DD.md` — [#1](cold-reads/2026-09-08.md), [#2](cold-reads/2026-09-08b.md), [#3](cold-reads/2026-09-09.md), [#4](cold-reads/2026-09-10.md), [#5](cold-reads/2026-09-11.md), [#6](cold-reads/2026-09-12.md), [#7](cold-reads/2026-09-12-sweep.md) |
 | Why does the stored arm miscount, and what was ruled out? | [`cold-reads/2026-09-12-miscount.md`](cold-reads/2026-09-12-miscount.md) — the five-arm isolation run |
+| How are the comprehension questions judged, and how good is that judge? | [`cold-reads/2026-09-12-judge.md`](cold-reads/2026-09-12-judge.md) |
 | What is done, and what is next? | [`status.md`](status.md) |
 
 ## The split, and why

@@ -24,3 +24,7 @@ data/eval_tasks/
 # ignored).
 data/miscount_tasks/
 data/.miscount-store/
+
+# Judging tasks for eval_model.py --emit-judge. Regenerated, and they carry
+# reader answers verbatim (same reason data/eval_tasks is ignored).
+data/judge_tasks/

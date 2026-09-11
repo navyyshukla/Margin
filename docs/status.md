@@ -178,9 +178,8 @@ re-measure and a cold read that the second's questions ride along on.
       legend clause can explain.
 
 - [ ] **Still owed, and named rather than quietly dropped:**
-      - The **16 comprehension questions are unmeasured.** They need a judge, and
-        judging is the one part with no free path. `JUDGE_MODEL` is pinned and
-        still unexercised; every run prints `JUDGED not measured`.
+      - ~~The **16 comprehension questions are unmeasured.**~~ **Measured
+        2026-09-12** — see below.
       - **Why a reader that has fetched sometimes misreads a row.** Narrowed
         2026-09-12 by `src/measure_miscount.py`, 25 readers over five arms
         (`docs/cold-reads/2026-09-12-miscount.md`): the document is **not** the
@@ -191,6 +190,50 @@ re-measure and a cold read that the second's questions ride along on.
         the only arm that could fetch, which is a suspect and not a rate. The
         arm that would separate "the turns" from "the retrieved text in the
         context" is named there and not built.
+## PR #10 — the judged half, measured without buying a judge (2026-09-12)
+
+`JUDGED not measured` had printed on every run since `eval_model.py` existed,
+because judging needed `JUDGE_MODEL` and this project does not buy quota. The
+expensive half turned out to be already done: `--emit` has been writing the 16
+comprehension questions into every task all along, readers have been answering
+them, and `--grade` stored the prose and scored nothing. No run file had ever
+contained `same_as_raw`.
+
+- [x] **`--emit-judge` / `--judge-in`**, the same road `--emit`/`--grade` took.
+      The run-file format did not change: `summarise()` only ever needed a
+      boolean per record.
+
+      | arm | GRADED | JUDGED |
+      |---|---:|---:|
+      | raw (reference) | 75/75 | **16/16** |
+      | compressed | 75/75 | **16/16** |
+      | stored | 73/75 | **16/16** |
+
+- [x] **The first run was worthless and the controls are why we know.** It came
+      back "same" 18 times out of 18 — indistinguishable from a judge that cannot
+      say "different" (Rule 14: *a detector nobody has shown a positive to is not
+      a detector*). `--emit-judge` now interleaves controls whose answer is known
+      in advance, `--judge-in` checks them before writing anything, and a failed
+      control produces **no judged number at all**. The judge scored **16/16 on
+      the controls, 8 of them pairs it had to call different**.
+
+- [x] **A blinding leak, found in the place nobody looks.** The prompt was
+      rewritten to stop naming the arms — and the task *filenames* still said
+      `__compressed` / `__stored`. Tasks are `judge_001.md` now.
+
+- [x] **Three checks.** `self_test` 6 cases → 9 (`_fake_run` hardcoded
+      `"judged": []`, so every judged failure mode was unreachable from the one
+      thing guarding the verdict); `inconclusive_reasons` gained a judged
+      denominator condition; the control gate itself, shown a positive.
+
+**The weakness, on the record:** judge and answerer are the same model family.
+The controls show this judge can tell answers to different questions apart; they
+do not show it free of a shared prior with the model whose work it marks. Full
+statement in `docs/cold-reads/2026-09-12-judge.md`.
+
+**It does not offset the graded failure.** The stored arm is still 73/75 and the
+run still says `THRESHOLDS NOT MET`.
+
 - [ ] **Deferred, and named rather than forgotten:** `margin export`/`import`
       (a document is meaningless without its index and objects, and there is no
       bundle unit); GC and `fsck` (a lost index leaks objects forever);
