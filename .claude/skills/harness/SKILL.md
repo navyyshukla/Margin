@@ -18,6 +18,7 @@ restate a rule here in a form that could drift from it.
 | `src/cli_test.py` | Does the tool keep the promises the tool makes? | no — generates its own | edit + commit |
 | `src/mcp_test.py` | Does the fetch tool resolve what the document promises? | no — builds its own | edit + commit |
 | `src/eval_harness.py` | Do the answers survive on the payloads I have? | yes | edit + commit |
+| `src/eval_model.py --self-test` | Can the eval's verdict still refuse? | no — pure functions | edit + commit |
 | `src/mutation_test.py` | Can the other gates still fail? | no — mutates the source | **commit only** |
 | `.claude/hooks/run_eval.sh` | Did Claude's last edit break any of them? | no | every `src/*.py` edit |
 | `.githooks/pre-commit` | Is this commit allowed to exist? | no | every commit |

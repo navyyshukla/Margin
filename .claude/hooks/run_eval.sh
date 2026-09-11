@@ -97,6 +97,15 @@ if ! output=$("$PYTHON" "$PROJECT_DIR/src/mcp_test.py" 2>&1); then
   exit 2
 fi
 
+# Milliseconds, no network, no key, no payload. It asks whether eval_model.py's
+# verdict can still refuse — three review findings in one round were the same
+# vacuous-pass bug, two of them written after Rule 16 was added for exactly that.
+if ! output=$("$PYTHON" "$PROJECT_DIR/src/eval_model.py" --self-test 2>&1); then
+  echo "eval_model verdict self-test FAILED after editing $file_path" >&2
+  echo "$output" >&2
+  exit 2
+fi
+
 ran=0
 for sample in "${SAMPLES[@]}"; do
   # Samples are gitignored real API payloads, so a fresh checkout has none.

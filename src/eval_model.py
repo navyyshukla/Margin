@@ -495,6 +495,11 @@ def judge(client, pacer, question, reference, candidate):
                    response_format=JUDGE_FORMAT)
         verdict = json.loads(out.output_text)
         return bool(verdict["same"]), verdict.get("why", "")
+    except QuotaExhausted:
+        # Same reasoning as ask(): a per-day quota is not waited out, and
+        # swallowing it here would rediscover it once per judged question at
+        # ~4.4 minutes each — hours of waiting to learn what the first one knew.
+        raise
     except Exception as exc:                       # noqa: BLE001
         return None, f"judge failed: {type(exc).__name__}: {exc}"
 
@@ -555,7 +560,19 @@ def run_payload(client, pacer, sample_path, store_root, arms_wanted, do_judge, o
 
             twin = arms[arm]["identical_to"]
             if twin and twin in row["arms"]:
-                row["arms"][arm] = dict(row["arms"][twin], by_construction=twin)
+                # The twin's ANSWER carries over — identical bytes cannot
+                # produce a different one — but not its expectation. A REMOVED
+                # check expects True on raw and False everywhere else, so an arm
+                # that is byte-identical to raw must be re-scored against its own
+                # expectation: the field really is still there, because the
+                # compressor removed nothing, and that has to fail. Copying the
+                # twin's `correct` marked it right precisely when it was wrong.
+                copied = dict(row["arms"][twin], by_construction=twin,
+                              expected=expected)
+                if "answer" in copied:
+                    copied["correct"] = (copied.get("problem") is None
+                                         and same_json(expected, copied["answer"]))
+                row["arms"][arm] = copied
                 continue
 
             rec = ask(client, pacer, arms[arm]["text"], ask_map[key],
@@ -597,6 +614,14 @@ def run_payload(client, pacer, sample_path, store_root, arms_wanted, do_judge, o
             for arm in arms_wanted:
                 if arm == "raw":
                     row["arms"][arm]["same_as_raw"] = True
+                    continue
+                if row["arms"][arm].get("by_construction"):
+                    # Byte-identical to an arm already judged. Asking the judge
+                    # whether a text matches itself spends a request from the
+                    # same quota the graded half needs.
+                    twin = row["arms"][arm]["by_construction"]
+                    row["arms"][arm]["same_as_raw"] = \
+                        row["arms"][twin].get("same_as_raw")
                     continue
                 same, why = judge(client, pacer, ask_map[key], reference,
                                   row["arms"][arm].get("text", ""))
@@ -705,6 +730,13 @@ def emit(paths, arms_wanted, out_dir, do_judge):
     files are named <payload>__<arm>.md so a human can keep track; nothing
     inside a task file names the arm.
     """
+    # Absolute, and this is not tidiness. Everything below is written INTO the
+    # generated fetch.py and into the instructions handed to the reader, and the
+    # whole point of the design is that the reader runs somewhere else entirely.
+    # A relative --emit DIR produced a fetch script whose MARGIN_STORE pointed at
+    # a path that only resolved from this directory, so the stored arm would have
+    # silently measured a document whose handles cannot be read.
+    out_dir = os.path.abspath(out_dir)
     os.makedirs(out_dir, exist_ok=True)
     store_root = os.path.join(out_dir, "store")
     os.makedirs(store_root, exist_ok=True)
@@ -733,10 +765,15 @@ def emit(paths, arms_wanted, out_dir, do_judge):
         graded += [(label, fn, True) for label, fn in module.REMOVED_CHECKS]
 
         for arm in arms_wanted:
-            if arms[arm]["identical_to"]:
+            twin = arms[arm]["identical_to"]
+            # Skip only if the twin is actually being emitted. `--arm raw --arm
+            # stored` on a payload where stored is identical to *compressed*
+            # used to skip stored and emit nothing for it, and the grade then
+            # dropped the arm from the report entirely — a run that silently
+            # measured fewer arms than asked for and still printed a pass.
+            if twin and twin in arms_wanted:
                 truth["identical"].append(
-                    {"payload": name, "arm": arm,
-                     "same_as": arms[arm]["identical_to"]})
+                    {"payload": name, "arm": arm, "same_as": twin})
                 continue
 
             questions, key = [], {}
@@ -871,9 +908,22 @@ def grade(out_dir, arms_wanted):
         for rows in (results["graded"], results["judged"]):
             for row in rows:
                 twin = row["arms"].get(same["same_as"])
-                if twin is not None and same["arm"] not in row["arms"]:
-                    row["arms"][same["arm"]] = dict(
-                        twin, by_construction=same["same_as"])
+                if twin is None or same["arm"] in row["arms"]:
+                    continue
+                copied = dict(twin, by_construction=same["same_as"])
+                # Same correction as the API path: the answer copies, the
+                # expectation does not. For a REMOVED check, an arm identical to
+                # raw still contains the field and must be scored as failing to
+                # remove it.
+                key = truth["answer_key"].get(
+                    f"{same['payload']}|{same['same_as']}", {}).get(
+                        twin.get("question"), {})
+                if row.get("removed") and key:
+                    expected = as_json_value(
+                        key["expected"] if same["arm"] == "raw" else False)
+                    copied["expected"] = expected
+                    copied["correct"] = same_json(expected, copied.get("answer"))
+                row["arms"][same["arm"]] = copied
 
     out["payloads"] = list(by_payload.values())
     if missing:
@@ -902,6 +952,52 @@ def grade(out_dir, arms_wanted):
                     if any(a in r["arms"] for p in out["payloads"]
                            for r in p["graded"]))
     return summarise(out, present)
+
+
+def inconclusive_reasons(tally, arms_wanted):
+    """Every reason this run cannot support a verdict. Empty means it can.
+
+    All three of the review findings that produced this function were the same
+    mistake: a gap of zero between two numbers that were never measured. The
+    guard has to be about the SHAPE of the comparison, not about one threshold,
+    or the next threshold added repeats it.
+
+    Three ways a comparison stops meaning anything:
+
+      1. The reference cannot answer its own questions from the uncompressed
+         payload — RAW_MIN_GRADED_FRACTION, which is what was here before.
+      2. An arm was asked a different number of questions than raw. A missing
+         answer file used to shrink raw's denominator, which dragged the floor
+         down with it and turned every gap negative, i.e. a pass.
+      3. An arm scored nothing at all, so it was never read. It used to
+         disappear from the report rather than sink it.
+    """
+    reasons = []
+    raw = tally["raw"]
+
+    if not raw["graded_n"]:
+        return ["the raw arm answered no graded questions at all"]
+
+    floor = raw["graded_n"] * RAW_MIN_GRADED_FRACTION
+    if raw["graded_ok"] < floor:
+        reasons.append(
+            f"the raw arm scored {raw['graded_ok']}/{raw['graded_n']}, under the "
+            f"{RAW_MIN_GRADED_FRACTION:.0%} floor — a reference that weak makes "
+            f"every gap below it meaningless rather than passing")
+
+    for arm in arms_wanted:
+        if arm == "raw":
+            continue
+        n = tally[arm]["graded_n"]
+        if not n:
+            reasons.append(f"the {arm} arm has no graded answers — it was never "
+                           f"read, so its gap of zero is an absence, not a result")
+        elif n != raw["graded_n"]:
+            reasons.append(
+                f"the {arm} arm answered {n} graded questions against raw's "
+                f"{raw['graded_n']} — different denominators, so the gap between "
+                f"them is not a difference in quality")
+    return reasons
 
 
 def summarise(out, arms_wanted):
@@ -944,19 +1040,16 @@ def summarise(out, arms_wanted):
         return 0
 
     print()
-    raw = tally["raw"]
-    floor = raw["graded_n"] * RAW_MIN_GRADED_FRACTION
-    if raw["graded_n"] and raw["graded_ok"] < floor:
-        # Refusing to draw a conclusion is the result here. Everything below
-        # compares against this arm, so if it cannot answer its own questions
-        # from the uncompressed payload, the gaps measure nothing.
-        print(f"  INCONCLUSIVE: the raw arm scored {raw['graded_ok']}/"
-              f"{raw['graded_n']}, under the {RAW_MIN_GRADED_FRACTION:.0%} floor.")
-        print("  Every threshold below is relative to raw, so a weak reference "
-              "makes them meaningless rather than passing.")
-        print("  Look at the run file: this is usually a harness fault — an "
-              "unparseable answer shape, a bad key, a model refusing — and not "
-              "evidence about compression.")
+    refusals = inconclusive_reasons(tally, arms_wanted)
+    if refusals:
+        # Refusing to draw a conclusion IS the result. Everything below is a
+        # comparison against raw, and a comparison needs two comparable things.
+        print("  INCONCLUSIVE — this run cannot support a verdict:")
+        for reason in refusals:
+            print(f"    - {reason}")
+        print("  These are harness faults, not evidence about compression: a "
+              "missing answer file, an arm that was never read, a reference that "
+              "could not answer its own questions.")
         return 2
 
     failed = False
@@ -964,13 +1057,25 @@ def summarise(out, arms_wanted):
         if arm == "raw":
             continue
         g = tally["raw"]["graded_ok"] - tally[arm]["graded_ok"]
-        j = tally["raw"]["judged_ok"] - tally[arm]["judged_ok"]
-        g_ok, j_ok = g <= GRADED_ALLOWED_GAP, j <= JUDGED_ALLOWED_GAP
-        failed |= not (g_ok and j_ok)
-        print(f"  {arm:11} GRADED gap {g:+d} (allowed {GRADED_ALLOWED_GAP}) "
-              f"{'PASS' if g_ok else 'FAIL'}   "
-              f"JUDGED gap {j:+d} (allowed {JUDGED_ALLOWED_GAP}) "
-              f"{'PASS' if j_ok else 'FAIL'}")
+        g_ok = g <= GRADED_ALLOWED_GAP
+        line = (f"  {arm:11} GRADED gap {g:+d} "
+                f"(allowed {GRADED_ALLOWED_GAP}) {'PASS' if g_ok else 'FAIL'}")
+
+        # The judged half only gets a verdict when it was actually judged.
+        # It printed "JUDGED gap +0 (allowed 1) PASS" on every --no-judge and
+        # every offline run, off a 0/0 tally — zero minus zero is zero, so the
+        # bar cleared itself. That is Rule 16 exactly, in the file that added
+        # Rule 16, one threshold along from the floor written to prevent it.
+        if tally[arm]["judged_n"]:
+            j = tally["raw"]["judged_ok"] - tally[arm]["judged_ok"]
+            j_ok = j <= JUDGED_ALLOWED_GAP
+            line += (f"   JUDGED gap {j:+d} (allowed {JUDGED_ALLOWED_GAP}) "
+                     f"{'PASS' if j_ok else 'FAIL'}")
+            failed |= not j_ok
+        else:
+            line += "   JUDGED not measured"
+        failed |= not g_ok
+        print(line)
 
     if "stored" in arms_wanted:
         # Rule 1's shape: assert the mechanism was used, not just that an answer
@@ -994,6 +1099,87 @@ def summarise(out, arms_wanted):
     return 1 if failed else 0
 
 
+def _fake_run(arms):
+    """A run file shaped enough for summarise(), built from {arm: (ok, n)}."""
+    rows = []
+    for i in range(max(n for _, n in arms.values())):
+        row = {"label": f"Q{i + 1}", "removed": False, "arms": {}}
+        for arm, (ok, n) in arms.items():
+            if i < n:
+                row["arms"][arm] = {"correct": i < ok, "fetch_calls": []}
+        rows.append(row)
+    return {"payloads": [{"payload": "fake.json", "graded": rows, "judged": [],
+                          "stored_has_handles": False}]}
+
+
+def self_test():
+    """Does the verdict refuse when there is nothing to compare?
+
+    Every case here is a real defect this file shipped. Three of them arrived in
+    one review, all the same mistake in different clothes — a gap of zero between
+    two numbers that were never measured — and two of those were written *after*
+    Rule 16 was added to docs/harness.md for exactly that. Intending to be
+    careful about it demonstrably did not work, so it is a check now (Rule 13).
+
+    It runs in milliseconds and needs no network, no key and no payload, which is
+    why the hook and pre-commit can afford it even though the sweep itself is a
+    script rather than a gate.
+    """
+    import contextlib
+    import io
+
+    def verdict(arms):
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = summarise(_fake_run(arms), tuple(arms))
+        return code, buffer.getvalue()
+
+    failures = []
+
+    def expect(name, arms, code, must_say=None, must_not_say=None):
+        got, text = verdict(arms)
+        if got != code:
+            failures.append(f"{name}: expected exit {code}, got {got}")
+        if must_say and must_say not in text:
+            failures.append(f"{name}: output never said {must_say!r}")
+        if must_not_say and must_not_say in text:
+            failures.append(f"{name}: output said {must_not_say!r} and must not")
+
+    # The happy path still has to pass, or every case below proves nothing.
+    expect("all arms level", {"raw": (10, 10), "compressed": (10, 10)}, 0,
+           must_say="within the stated thresholds")
+
+    # A real regression must still fail.
+    expect("compressed one behind", {"raw": (10, 10), "compressed": (9, 10)}, 1,
+           must_say="THRESHOLDS NOT MET")
+
+    # The floor, which was the first of these to be written.
+    expect("raw below the floor", {"raw": (5, 10), "compressed": (5, 10)}, 2,
+           must_say="INCONCLUSIVE")
+
+    # A missing answer file shrank raw's denominator, which dragged the floor
+    # down with it and turned every gap negative — i.e. into a pass.
+    expect("raw has fewer questions than compressed",
+           {"raw": (4, 4), "compressed": (10, 10)}, 2, must_say="denominators")
+
+    # An arm nobody read used to vanish from the report instead of sinking it.
+    expect("an arm was never read", {"raw": (10, 10), "compressed": (0, 0)}, 2,
+           must_say="never read")
+
+    # The judged half cleared a bar it had never been measured against, and said
+    # PASS while doing it.
+    _, text = verdict({"raw": (10, 10), "compressed": (10, 10)})
+    if "JUDGED not measured" not in text:
+        failures.append("judged: a 0/0 tally must say 'not measured'")
+    if "JUDGED gap" in text:
+        failures.append("judged: a 0/0 tally must not print a gap or a verdict")
+
+    print(f"verdict self-test: {6 - len(failures)}/6 cases hold")
+    for line in failures:
+        print(f"  FAIL  {line}")
+    return 1 if failures else 0
+
+
 def estimate(paths, arms_wanted, do_judge):
     """What a sweep would cost, without making a call.
 
@@ -1010,8 +1196,11 @@ def estimate(paths, arms_wanted, do_judge):
             n_graded = sum(1 for label, _ in
                            list(module.PRESERVE_CHECKS) + list(module.REMOVED_CHECKS)
                            if label.split()[0] in ask_map)
+            # Honour --no-judge, which skips asking these entirely. Counting
+            # them anyway overstated the request count and the bill by 16 per
+            # payload — in the one function whose only job is that number.
             n_judged = sum(1 for label in module.MANUAL_QUESTIONS
-                           if label.split()[0] in ask_map)
+                           if label.split()[0] in ask_map) if do_judge else 0
             arms = build_arms(path, root)
             for arm in arms_wanted:
                 if arms[arm]["identical_to"]:
@@ -1063,6 +1252,9 @@ def main():
     parser.add_argument("--rpm", type=int, default=DEFAULT_RPM,
                         help=f"requests per minute ceiling (default {DEFAULT_RPM}; "
                              "the free tier refuses the 21st in a rolling minute)")
+    parser.add_argument("--self-test", action="store_true",
+                        help="check that the verdict refuses when there is "
+                             "nothing to compare; no network, no key, no payload")
     parser.add_argument("--emit", metavar="DIR",
                         help="write self-contained reading tasks to DIR instead "
                              "of calling an API; anything can then read them")
@@ -1071,6 +1263,13 @@ def main():
     parser.add_argument("--regrade", metavar="RUNFILE",
                         help="re-grade a saved run without spending anything")
     args = parser.parse_args()
+
+    # First, and before any path resolution: the self-test is meant to run with
+    # no network, no key and no payload directory, and putting it after the
+    # sample glob meant it crashed on a tree without data/samples — which is
+    # every tree pre-commit builds, i.e. the one place it most needs to run.
+    if args.self_test:
+        return self_test()
 
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if args.pilot:
