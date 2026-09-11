@@ -5,7 +5,7 @@ description: Margin's test-harness rulebook and the development→main merge gat
 
 # The harness
 
-Seven gates and sixteen rules. This file is the **procedure** — what to do. The
+Eight gates and sixteen rules. This file is the **procedure** — what to do. The
 **record** — the failure that bought each rule — is `docs/harness.md`, and it is
 cited by number from **76 places across 20 files** outside itself, 46 of them in
 `src/*.py` (re-measured 2026-09-11; this line said 27 and 20, which was wrong in

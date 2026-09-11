@@ -134,19 +134,50 @@ all of them would cost — correctly, from `[Nt]` alone — and reconstructed
 `fetch(document="22c8…", ids=[…])` from the legend, never having been told the
 tool exists.
 
-## Not built, and said out loud
+## Operability — built 2026-09-12, after being named here for three days
 
-- **`margin export` / `import`.** A document is meaningless without its index and
-  objects, and there is no bundle unit. A real gap.
-- **GC and `fsck`.** With the index rather than hashes in the document, garbage
-  collection must mark from `docs/`, so a lost index leaks objects forever.
+The two gaps this section used to list are closed. They were the two that made
+the store *unrecoverable* rather than merely unpolished, which is what got them
+past the scope rule that keeps the CLI narrow (`docs/cli.md`).
+
+| command | what it answers |
+|---|---|
+| `margin fsck` | is every index backed by the content it names, and is anything here that nothing references? |
+| `margin gc [--delete]` | remove what nothing references. **Dry run by default** — the only irreversible thing in this project |
+| `margin export <doc-id> <file>` | one document's index and objects, as a single JSON bundle |
+| `margin import <file>` | a bundle into this store |
+
+**A bundle is one JSON file**, `{"doc_id", "index", "objects"}`. Objects are
+UTF-8 text by construction — `stash_bulk_cells` stores `render.encode_cell`
+output — so it is readable and diffable with no archive handling. `export`
+refuses to write a bundle whose content is already missing; a bundle that
+resolves only on the machine that made it would be worse than no command.
+`import` goes through `commit`, so it inherits the refusal to overwrite an
+object whose bytes differ (Rule 14) rather than reimplementing it.
+
+**GC marks from every index in `docs/`, never from one document.** Dedup is a
+cross-document property — the section below says so — and an object this
+document stopped using may be the only copy another document has. That is not a
+detail: the mutation "gc marks from one index instead of every index in `docs/`"
+**survived** the first check written for it, because that check held a single
+document and could not tell the two apart. It holds two now.
+
+The store gained the one surface it did not have: enumeration and deletion, on
+`MemoryStore` and `FileStore` both, because Rule 15 exists precisely because
+every store check once ran on the convenient one.
+
+## Still not built, and declined rather than pending
+
 - **TTL and retrieval counts.** Headroom evicts on a 30-minute TTL and feeds
   retrieval counts back into how aggressively content is compressed next time —
   content fetched every time should stop being offloaded. A fixed
-  `MIN_STORE_SAVING` cannot express that.
+  `MIN_STORE_SAVING` cannot express that. **Declined:** it is a policy for a
+  store under memory pressure, and `gc` now bounds growth for the one this is.
 - **Per-column statistics** (Parquet-style min/max/null-count), so a reader could
   skip fetches entirely for many questions. Promising and entirely unmeasured,
-  which is exactly why it is not built.
+  which is exactly why it is not built — the same reason
+  `graphql_countries.emoji` was declined in `docs/shapes.md`. **Declined until
+  somebody measures it**, which is the project's standing bar for a new rule.
 
 **The measurement that was owed, and what it came back with (2026-09-12).**
 Every figure above is about *documents*, and `src/eval_model.py` asks whether

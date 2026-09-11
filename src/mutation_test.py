@@ -214,6 +214,65 @@ MUTATIONS = [
         "FileStore does not survive real bytes",
         gate="property_test.py",
     ),
+    # The store's operability commands. Each of these is a detector or an
+    # inverse that normal operation never exercises, which is precisely how
+    # missing_handles and orphaned_ids shipped vacuous and survived this suite —
+    # so each one gets a mutation pointed at the named check that guards it.
+    Mutation(
+        "gc marks from one index instead of every index in docs/",
+        "src/store.py",
+        "    for doc_id in store.document_ids():\n"
+        "        reachable.update(store.read_index(doc_id).values())",
+        "    for doc_id in store.document_ids()[:1]:\n"
+        "        reachable.update(store.read_index(doc_id).values())",
+        "the leak detector does not detect",
+        gate="property_test.py",
+    ),
+    Mutation(
+        "the leak detector reports nothing, so gc has nothing to sweep",
+        "src/store.py",
+        "    return sorted(set(store.object_names()) - reachable_objects(store))",
+        "    return []",
+        "the leak detector does not detect",
+        gate="property_test.py",
+    ),
+    Mutation(
+        "fsck stops noticing content that changed under it",
+        "src/store.py",
+        "            except ValueError:\n"
+        '                broken.append((doc_id, cell_id, name, "content changed"))',
+        "            except ValueError:\n"
+        "                pass",
+        "fsck does not notice content that changed",
+        gate="property_test.py",
+    ),
+    Mutation(
+        "a bundle carries the index but not the objects",
+        "src/store.py",
+        '           "objects": {name: store.get(name) for name in sorted(set(index.values()))}}',
+        '           "objects": {}}',
+        "a bundle does not resolve in another store",
+        gate="property_test.py",
+    ),
+    Mutation(
+        "import writes the objects and never the index",
+        "src/store.py",
+        "    commit(store, doc_id, pending)\n    return doc_id, len(by_hash)",
+        "    for text in pending.values():\n        store.put(text)\n"
+        "    return doc_id, len(by_hash)",
+        "a bundle does not resolve in another store",
+        gate="property_test.py",
+    ),
+    # And one at the CLI boundary, because the four commands are argv and exit
+    # codes before they are anything else (Rule 11).
+    Mutation(
+        "gc deletes without being asked to",
+        "src/store_commands.py",
+        "    if not delete:",
+        "    if False:",
+        "gc: without --delete it removes nothing",
+        gate="cli_test.py",
+    ),
     # The legend. Nothing here guarded it until 2026-09-12: the #keyed clause
     # could be reworded or deleted and every gate stayed green, because
     # decompress strips the key column either way and round-trip cannot see a
