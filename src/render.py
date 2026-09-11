@@ -196,10 +196,19 @@ def legend_for(table, encoded_rows):
     # #keyed is a structural line rather than a cell encoding, but it is the
     # least guessable thing in the format: without it a reader sees an ordinary
     # column called _key and no reason to think the rows were ever a dict.
+    #
+    # The negation at the end was bought by cold read #5 (2026-09-11), the first
+    # defect here found by a machine rather than a person. Asked for "the
+    # complete ethereum record", the reader returned all twelve fields and a
+    # thirteenth, _key. The old wording said what the column IS and left the
+    # reader to infer what it is not, which is the same failure mode as the
+    # col:dict clause above — hence the same shape of fix, stating the negative
+    # outright rather than hoping it is obvious.
     if table.get("key_column"):
         seen.append(
             f"#keyed = rows came from an object; column {table['key_column']} "
-            "holds each record's key"
+            "holds the key each record was stored under, and is NOT a field of "
+            "the record"
         )
 
     # a.b was the only convention the 2026-09-08 cold reader got right purely by

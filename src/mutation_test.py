@@ -214,6 +214,24 @@ MUTATIONS = [
         "FileStore does not survive real bytes",
         gate="property_test.py",
     ),
+    # The legend. Nothing here guarded it until 2026-09-12: the #keyed clause
+    # could be reworded or deleted and every gate stayed green, because
+    # decompress strips the key column either way and round-trip cannot see a
+    # sentence (Rule 3). Cold read #5 found the cost of that — a reader reporting
+    # _key as a thirteenth field — so the wording is now a claim with a check.
+    #
+    # The mutation reverts to the exact pre-fix wording rather than deleting the
+    # clause, because deleting it is the easy case: the check has to notice a
+    # legend that still names the column and no longer says what it is not.
+    Mutation(
+        "the #keyed legend stops saying _key is not a field",
+        "src/render.py",
+        '            "holds the key each record was stored under, and is NOT a field of "\n'
+        '            "the record"',
+        '            "holds each record\'s key"',
+        "#keyed unexplained in the legend",
+        gate="property_test.py",
+    ),
     # The MCP server. A third process boundary, so a third gate.
     Mutation(
         "the batch fetch quietly returns only the first id",
