@@ -143,8 +143,11 @@ re-measure and a cold read that the second's questions ride along on.
 
 - [x] **Three graded questions that cannot be answered without fetching.**
       `Q14`/`Q15` on github (bodies) and `H14` on hn (a stored `children` array).
-      Graded questions **72 → 75**; the eight `checks_*.py` modules now hold 79
-      checks.
+      Graded questions **72 → 75**; the eight `checks_*.py` modules now hold 80
+      checks — counted at import time, not by reading the list literals, because
+      `checks_pokeapi_ditto.py` appends one after its own. Counting the literals
+      is how this line first said 79 and how "76 checks" had been wrong at 77
+      since before this PR (review, 2026-09-12).
 
 - [x] **Cold read #6** (`docs/cold-reads/2026-09-12.md`), the #1–#4 kind: 10/10,
       confidence **9/10** — the highest of seven reads. C8 correct, `_key`

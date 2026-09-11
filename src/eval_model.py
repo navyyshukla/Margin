@@ -28,7 +28,7 @@ every store check ran on MemoryStore and FileStore shipped broken.
 
 ## Two kinds of question, and only one needs a judge
 
-  GRADED (72)  the existing PRESERVE_CHECKS and REMOVED_CHECKS. Ground truth is
+  GRADED (75)  the existing PRESERVE_CHECKS and REMOVED_CHECKS. Ground truth is
                computed from the raw payload at run time, exactly as
                eval_harness.py does it, so grading is a same_json comparison and
                **no second model is involved**. This is also what finally makes

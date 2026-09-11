@@ -21,7 +21,7 @@ is its actual alternative:
 | Payload | compact JSON | table | saving |
 |---|---|---|---|
 | hn_stories.json | 35,585 | 20,284 | **43.0%** |
-| coingecko_prices.json | 1,226 | 851 | **30.6%** |¹
+| coingecko_prices.json | 1,226 | 851 | **30.6%**¹ |
 | graphql_countries.json | 15,187 | 11,547 | **24.0%** |
 | github_issues.json | 28,884 | 23,447 | **18.8%** |
 | jsonplaceholder_posts.json | 7,162 | 6,437 | **10.1%** |

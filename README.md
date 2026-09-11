@@ -77,7 +77,7 @@ here using the `*_url` convention — where it is the largest single contributor
   verified at runtime, and a transform that cannot be undone is not shipped past
   that line. What goes and what it costs: `docs/shapes.md`.
 - **Never worse.** If nothing helps, the input comes back unchanged.
-- **Answers must not move, and a model was finally asked.** 79 checks assert the
+- **Answers must not move, and a model was finally asked.** 80 checks assert the
   dropping stage kept every field a question needs; they cannot see the table
   format, because the round-trip check above them already proved it exact. So
   `src/eval_model.py` puts the documents to a reader that has never seen this

@@ -803,6 +803,13 @@ def legend_explains_keyed_column(payload):
     free_key_name dodges a record's own keys, so a payload whose records already
     carry `_key` and `_key2` is keyed on `_key3`, and a legend naming the wrong
     one is exactly the failure this is aimed at.
+
+    That last claim is why the name is matched as `column {name} ` — the exact
+    phrase render.legend_for emits — and not with `in`. A substring test is
+    one-directional: with the document keyed on `_key`, a legend wrongly naming
+    `_key3` still contains `_key`, so the check passes on the half of the failure
+    it was named for. The `_key3` fixture happens to exercise the other half,
+    which is how a substring test looked like it worked (review, 2026-09-12).
     """
     text, _ = compress_json(payload)
     if not text.startswith(FORMAT_MARKER):
@@ -815,7 +822,7 @@ def legend_explains_keyed_column(payload):
 
     column = json.loads(keyed[len(render.KEYED_PREFIX):])
     legend = next((l for l in lines if l.startswith(LEGEND_PREFIX)), "")
-    return column in legend and "NOT a field of the record" in legend
+    return f"column {column} " in legend and "NOT a field of the record" in legend
 
 
 def type_claims_are_backed(payload):
@@ -902,10 +909,20 @@ def main():
 
     # The #keyed legend, checked on the fixed cases rather than the random sweep:
     # random_payload never builds a record map, so a check hung off the sweep
-    # would pass while testing nothing (Rule 2). Three MUST_TABULATE cases are
-    # record maps, one of them keyed on `_key3` because the records own `_key`
-    # and `_key2` — and a run that finds none of them is a failure, not a skip,
-    # because it means the fixtures stopped producing the line (Rule 13's shape).
+    # would pass while testing nothing (Rule 2).
+    #
+    # Three MUST_TABULATE cases are written as record maps and exactly ONE of
+    # them reaches this check — the `_key3` fixture, whose records own `_key` and
+    # `_key2`. The other two save 3.3% and -5.1%, below MIN_TABLE_SAVING, so they
+    # fall back to plain JSON and emit no #keyed line at all; the printed
+    # `(N keyed)` count is what says so out loud. Do not read the fixture list as
+    # three-way redundancy here — it is one tripwire, which is why a run finding
+    # zero is a failure rather than a skip (Rule 13's shape).
+    #
+    # (`MUST_TABULATE` asserts only round-trip, so two entries in a list of that
+    # name silently do not tabulate. Pre-existing and left alone deliberately:
+    # changing what MUST_TABULATE means is a bigger change than this one, and
+    # Rule 6 is where it belongs.)
     keyed_cases = 0
     for index, payload in enumerate(MUST_TABULATE):
         verdict = legend_explains_keyed_column(payload)
