@@ -99,10 +99,18 @@ demonstrated it.
 
 **Read #7 reproduced it exactly**, a day later with a different reader: the same
 two questions, the same arm, the same control arm answering both correctly. A
-finding that repeats under a fresh reader is no longer one sample, and this one
-now has a shape — it is the **stored** arm that miscounts, on a column that is
-byte-identical in the compressed document and holds no handle. Nobody has
-isolated why, and until somebody does, read #7's verdict stands at FAIL.
+finding that repeats under a fresh reader is no longer one sample.
+
+**And then the diagnosis turned out to be wrong.** A five-arm run on 2026-09-12
+([the miscount run](cold-reads/2026-09-12-miscount.md)) showed the failing reader
+misreading a single row and totalling its own list correctly — so the thing every
+read since #1 has called "counting" is, in the one case anyone has looked at
+closely, **losing your place in a row**. Twenty readers denied a fetch tool made
+no mistake at all on the document that had failed twice.
+
+That is the fifth read in a row to find that a diagnosis held with confidence was
+not the whole story, and the argument for the `D1` kind of question — one that
+asks for the working, not just the answer.
 
 So the format has now paid three times to remove counting or ambiguity,
 deliberately:
@@ -143,11 +151,21 @@ the second now the only open finding these reads have:
   on the `#dict` line" and sits beside columns where a small integer is genuinely
   a count. No answer in seven reads has been wrong because of it; the read that
   gets one wrong is the one that buys the fix.
-- **Counting, in the stored arm specifically.** Reads #5 and #7 both had their
-  stored reader miss the *same two* questions — how many GitHub issues have zero
-  comments, and their total — while the compressed and raw readers answered both
-  correctly from a column that is identical in every arm and contains no handle
-  at all. Read #7 is the sharper case: that reader fetched two issue bodies out
-  of the store correctly and then miscounted thirty single-digit integers printed
-  in front of it. **Unfixed, and no candidate fix** — a count is not a marker a
-  legend clause can explain. It is the reason read #7's own verdict is FAIL.
+- **A reader that has fetched sometimes misreads a row.** Reads #5 and #7 both
+  had their stored reader miss the *same two* questions — how many GitHub issues
+  have zero comments, and their total — from a column identical in every arm that
+  contains no handle at all. **Isolated 2026-09-12**
+  ([the miscount run](cold-reads/2026-09-12-miscount.md), 25 readers, five arms):
+  the twenty readers given no fetch tool missed **nothing**, including ten given
+  the exact bytes that failed twice, and the one miss in the run came from the
+  one arm that could fetch. The document is not a sufficient cause and neither is
+  the size of the task.
+
+  It is also **not counting**, which is what seven reads had been calling it. The
+  failing reader listed row 7 as 0 where the document says 1 and then totalled its
+  own list correctly — a misread row, not bad arithmetic, which is a distinction
+  reads #5 and #7 could not make and the `D1` diagnostic was added to make.
+
+  **Still unfixed, and 1 of 5 is not a rate** — below the bar that run set in
+  advance. Suspect, not cause, and what "having fetched" means (the turns, or the
+  retrieved text sitting in the context) is not yet separated.

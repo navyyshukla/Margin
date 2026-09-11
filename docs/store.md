@@ -167,7 +167,21 @@ correctly off the legend's "first is absolute" clause.
 two misses are `Q5` and `Q6` on github — how many issues have zero comments, and
 their total. `comments` is not stored: no cell in that column is a handle, the
 column decompresses identically in both arms, and the compressed and raw readers
-both answered correctly. The same reader counted it wrong immediately after two
-successful fetches. That is the counting weakness `docs/cold-reads.md` tracks,
-reproduced across two runs and two readers, and it has no candidate fix — which
-is why `GRADED_ALLOWED_GAP = 0` reports FAIL rather than being widened to fit.
+both answered correctly.
+
+**Isolated 2026-09-12** (`src/measure_miscount.py`,
+`docs/cold-reads/2026-09-12-miscount.md`): 25 readers across five arms. The
+twenty given no fetch tool missed **nothing** — including ten given the exact
+stored bytes that had failed twice — and the run's single miss came from the one
+arm that could fetch, where the reader misread one row and then totalled its own
+list correctly.
+
+So the document is not what causes it, the size of the task is not either, and it
+is a misread row rather than the "counting" seven cold reads had assumed. What
+remains is a suspicion about having fetched — whether the turns or the retrieved
+text left in the reader's context — at 1 miss in 5, which is **not a rate**.
+`GRADED_ALLOWED_GAP = 0` still reports FAIL, and is not being widened to fit a
+result it exists to catch.
+
+The `[Nt]` size on each handle was the leading suspect and was **cleared**: a
+bare-handle arm read the same document just as well.
