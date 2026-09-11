@@ -148,17 +148,26 @@ tool exists.
   skip fetches entirely for many questions. Promising and entirely unmeasured,
   which is exactly why it is not built.
 
-**The measurement that was owed, and what it came back with (2026-09-11).**
-Every figure above is about *documents*, and `src/eval_model.py` now asks whether
-answers survive too. Across 72 graded questions and eight payloads, read by fresh
-readers given the document and nothing else: **raw 72/72, compressed 71/72,
-stored 69/72.** The single compressed miss is a legibility defect in `#keyed`
-rather than lost data (`docs/status.md`); the two stored misses are one reader
-mis-counting a column that decompresses identically in both arms.
+**The measurement that was owed, and what it came back with (2026-09-12).**
+Every figure above is about *documents*, and `src/eval_model.py` asks whether
+answers survive too. Across 75 graded questions and eight payloads, read by fresh
+readers given the document and nothing else: **raw 75/75, compressed 75/75,
+stored 73/75** (`docs/cold-reads/2026-09-12-sweep.md`).
 
-**But 73.7% is still not fully a claim about answers, and the gap is specific.**
-Retrieval was exercised exactly **once** in that run. On `github_issues` and
-`hn_stories` the store holds only bodies, and none of the graded questions reads
-a body — the ones that do are the 16 comprehension questions, which need a judge
-and are still unmeasured. So the store round-trips, resolves, and costs nothing
-in answer quality on the evidence available; that evidence is one fetch deep.
+**Retrieval is no longer one fetch deep.** The 2026-09-11 run queried the store
+exactly once, on `jsonplaceholder`, because no graded question read a stored
+value on the other two payloads. Three questions were added for that —
+`Q14`/`Q15` on github bodies, `H14` on an hn `children` array — and the stored
+arm now **fetches 4 times across all three payloads that carry a store, and gets
+every retrieved answer right.** `H14` is the sharpest of them: the reader fetched
+a delta-encoded cell that is not in the document at all and read its first value
+correctly off the legend's "first is absolute" clause.
+
+**The stored arm still fails its own bar, and the reason is not the store.** Its
+two misses are `Q5` and `Q6` on github — how many issues have zero comments, and
+their total. `comments` is not stored: no cell in that column is a handle, the
+column decompresses identically in both arms, and the compressed and raw readers
+both answered correctly. The same reader counted it wrong immediately after two
+successful fetches. That is the counting weakness `docs/cold-reads.md` tracks,
+reproduced across two runs and two readers, and it has no candidate fix — which
+is why `GRADED_ALLOWED_GAP = 0` reports FAIL rather than being widened to fit.

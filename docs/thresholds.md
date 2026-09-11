@@ -21,13 +21,19 @@ is its actual alternative:
 | Payload | compact JSON | table | saving |
 |---|---|---|---|
 | hn_stories.json | 35,585 | 20,284 | **43.0%** |
-| coingecko_prices.json | 1,226 | 851 | **30.6%** |
+| coingecko_prices.json | 1,226 | 851 | **30.6%** |¹
 | graphql_countries.json | 15,187 | 11,547 | **24.0%** |
 | github_issues.json | 28,884 | 23,447 | **18.8%** |
 | jsonplaceholder_posts.json | 7,162 | 6,437 | **10.1%** |
 | pokeapi_ditto.json | 7,897 | 7,442 | **5.8%** |
 | exchangerates_usd.json | 1,420 | — | no table |
 | openmeteo_forecast.json | 3,642 | — | no table |
+
+¹ Left as measured on 2026-09-08 rather than refreshed, because this table is
+what *derived* the gate and a derivation is a dated thing. The figure today is
+863 / **29.6%**: the `#keyed` legend clause grew 12 tokens on 2026-09-12 (see
+*The `#legend` line* below). The derivation is unaffected — 29.6% clears 0.05 as
+comfortably as 30.6% did.
 
 The smallest shipped saving is 5.8%, which is close enough to the 0.05 gate to
 be worth watching: another readability line charged to every payload would push
@@ -363,12 +369,35 @@ unrepresentable column costs a saving and never a value.
 
 ## The `#legend` line (src/render.py)
 
-45 tokens on `hn_stories.json`, 7 on `github_issues.json`, and the only entry
-that truly earns its place is `dints`: a delta-encoded ID list renders as
-`16582146 6 3 2`, and a reader taking those at face value answers with comment
-IDs that do not exist. A saving that makes the model confidently wrong is worth
-less than no saving at all, so the encodings that cannot be guessed are stated
-in the document. Entries appear only when the document uses them.
+**Re-measured 2026-09-12, storeless documents: 80 tokens on
+`graphql_countries.json`, 70 on `hn_stories.json`, 66 on `github_issues.json`,
+32 on `coingecko_prices.json`.** This section said "45 and 7" until then, which
+was true on 2026-09-08 and has been wrong ever since: the line has since grown
+the repeating-header clause, the `col:dict` clause, the handle clause and now the
+`#keyed` negation, each bought by a cold read. Rule 5 — and the particular trap
+here is that the legend is the one part of the format whose *price rises every
+time a reader is confused*, so a figure from before the last read is always low.
+
+The only entry that truly earns its place on arithmetic is `dints`: a
+delta-encoded ID list renders as `16582146 6 3 2`, and a reader taking those at
+face value answers with comment IDs that do not exist. A saving that makes the
+model confidently wrong is worth less than no saving at all, so the encodings
+that cannot be guessed are stated in the document. Entries appear only when the
+document uses them — `coingecko_prices` pays for `#keyed` and nothing else.
+
+### What the `#keyed` clause costs, and why it grew (2026-09-12)
+
+| wording | coingecko legend | payload out | saved |
+|---|---:|---:|---:|
+| `column _key holds each record's key` | 20 | 851 | 30.6% |
+| **`… holds the key each record was stored under, and is NOT a field of the record`** | **32** | **863** | **29.6%** |
+
+12 tokens, one point on the one payload of eight that is a record map, and
+nothing set-wide (71,022 → 71,034; 41.6% either way). Bought by cold read #5,
+which had the first wording in front of it and returned `_key` as a thirteenth
+field of the `ethereum` record. The precedent is the one directly below on
+`HEADER_REPEAT_EVERY` and the keyed `#dict` line: pay for legibility **after** a
+read demonstrates the need, never on suspicion.
 
 ## Not built: cross-column mirroring
 

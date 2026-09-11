@@ -52,6 +52,8 @@ even which arm it is. That last exclusion matters as much as the others.
 | [2026-09-09](cold-reads/2026-09-09.md) | **11/12** | 8/10 | could not verify an index 61 deep into an unmarked `#dict` array, and **miscounted 58 as 57**; the repeating header was never explained |
 | [2026-09-10](cold-reads/2026-09-10.md) | 12/12 | 8/10 | a `#dict` cell reads as a value, not a reference (`1` label vs key `1`) — the store's own handles were unambiguous |
 | [2026-09-11](cold-reads/2026-09-11.md) | **71/72** compressed, 69/72 stored, **72/72 raw** | not asked | `#keyed`'s synthetic `_key` column is reported as if it were a field of the record |
+| [2026-09-12](cold-reads/2026-09-12.md) | 10/10 | **9/10** | nothing about the format — only that two of the *questions* fail to name a currency; `_key` fixed and the reader said which clause fixed it |
+| [2026-09-12 sweep](cold-reads/2026-09-12-sweep.md) | **75/75** compressed, 73/75 stored, 75/75 raw | not asked | the stored arm miscounts the same two questions as read #5, with a different reader — counting, demonstrated twice |
 
 ## Read #5 is a different instrument, and the table above flattens that
 
@@ -70,14 +72,20 @@ what actually found the defects in #1–#4. **It does not replace them.** A new
 header line or cell encoding still owes a read of the #1–#4 kind; read #5's kind
 answers "did an answer move", which is a different question.
 
-## What five reads have established
+## What seven reads have established
 
-**Every read has found a real defect no automated gate could have seen**, and
-confidence rose every time while the same weakness kept surfacing somewhere new —
-which is the argument for running this on every format change rather than
+**Every read up to #5 found a real defect no automated gate could have seen**,
+and confidence rose every time while the same weakness kept surfacing somewhere
+new — which is the argument for running this on every format change rather than
 trusting a good score.
 
-**The weakness is counting.** All five reads have leaned on it. Reads #1 and #2
+**Read #6 is the first that found nothing wrong with the document**, and that is
+worth stating carefully rather than celebrating: it was run to check one clause,
+on the smallest payload in the set, and everything it flagged was a defect in the
+*questions* (two of them never name a currency). A read that finds nothing is
+evidence about one change, not about the format.
+
+**The weakness is counting.** All seven reads have leaned on it. Reads #1 and #2
 caught themselves by recounting; read #3 could not verify an index 61 entries
 into an unmarked array and, on the very next question, miscounted 58 as 57.
 "Caught by recounting" is luck about how careful the reader was, not a property
@@ -89,16 +97,25 @@ reading the *same* column in a different document, they could be shown to be the
 reader rather than the format. Four reads suspected counting; the fifth
 demonstrated it.
 
-So the format has now paid twice to remove counting, deliberately:
+**Read #7 reproduced it exactly**, a day later with a different reader: the same
+two questions, the same arm, the same control arm answering both correctly. A
+finding that repeats under a fresh reader is no longer one sample, and this one
+now has a shape — it is the **stored** arm that miscounts, on a column that is
+byte-identical in the compressed document and holds no handle. Nobody has
+isolated why, and until somebody does, read #7's verdict stands at FAIL.
+
+So the format has now paid three times to remove counting or ambiguity,
+deliberately:
 
 | Change | Cost | Bought by |
 |---|---|---|
 | header repeats every 40 rows (`HEADER_REPEAT_EVERY`) | +0.3% | read #2 |
 | `#dict` written as an object keyed by index, not a bare list | +0.2% | read #3 |
 | `[Nt]` on every handle, so a reader can price a fetch before making it | +0.5% | priced *before* read #4, which then proved it |
+| `#keyed` says `_key` is **not** a field of the record | +12 tokens (0.0% set-wide, 1.0 point on coingecko) | read #5, proved by reads #6 and #7 |
 
-Both times the alternative was to hope the reader counts carefully, and read #3
-is what that hope looks like when it fails. **Correctness is not the same as
+Every time, the alternative was to hope the reader works it out unaided, and read
+#3 is what that hope looks like when it fails. **Correctness is not the same as
 legibility, and only this test tells them apart.**
 
 ## What read #4 settled
@@ -115,19 +132,22 @@ legend alone, having never been told the tool exists.
 
 ## The next read
 
-Owed when the next format line or cell encoding is added — and one is already
-queued: **`_key`**, which read #5 showed is reported as a field of the record.
-The candidate fix is one clause in the legend, and per the `harness` skill a
-legibility change owes a read plus a re-measure.
+Owed when the next format line or cell encoding is added. **Nothing is queued** —
+read #5's `_key` finding was the last outstanding one, and reads #6 and #7 closed
+it on 2026-09-12 (one clause in the legend, +12 tokens, `docs/thresholds.md`).
 
-Three things to watch, the first two recorded in read #4 and deliberately not
-fixed, the third from read #5:
+Two things to watch, the first recorded in read #4 and deliberately not fixed,
+the second now the only open finding these reads have:
 
 - **A `#dict` cell reads as a value.** `1` in a `labels:dict` column means "key 1
   on the `#dict` line" and sits beside columns where a small integer is genuinely
-  a count. No answer in five reads has been wrong because of it; the read that
+  a count. No answer in seven reads has been wrong because of it; the read that
   gets one wrong is the one that buys the fix.
-- **Counting.** Every read has leaned on it. Read #4 leaned hardest and held;
-  read #5 finally caught it failing, twice, with a control arm to prove it was
-  the reader and not the document.
-- **`_key` as data.** Read #5's finding, above. Unfixed.
+- **Counting, in the stored arm specifically.** Reads #5 and #7 both had their
+  stored reader miss the *same two* questions — how many GitHub issues have zero
+  comments, and their total — while the compressed and raw readers answered both
+  correctly from a column that is identical in every arm and contains no handle
+  at all. Read #7 is the sharper case: that reader fetched two issue bodies out
+  of the store correctly and then miscounted thirty single-digit integers printed
+  in front of it. **Unfixed, and no candidate fix** — a count is not a marker a
+  legend clause can explain. It is the reason read #7's own verdict is FAIL.

@@ -53,7 +53,7 @@ Measured across eight APIs (tokens under `cl100k_base`, against the file as fetc
 | GitHub issues | bare list of records | **55.3%** |
 | HackerNews (Algolia) | records under `hits` | **43.0%** |
 | GraphQL countries | records under `data.countries` | **34.4%** |
-| CoinGecko prices | record map | **30.6%** |
+| CoinGecko prices | record map | **29.6%** |
 | JSONPlaceholder posts | 100 flat records | **26.2%** |
 | PokéAPI (one Pokémon) | single deep object | **5.5%** |
 | Open-Meteo forecast | already columnar | 0.0% |
@@ -77,19 +77,22 @@ here using the `*_url` convention — where it is the largest single contributor
   verified at runtime, and a transform that cannot be undone is not shipped past
   that line. What goes and what it costs: `docs/shapes.md`.
 - **Never worse.** If nothing helps, the input comes back unchanged.
-- **Answers must not move, and a model was finally asked.** 76 checks assert the
+- **Answers must not move, and a model was finally asked.** 79 checks assert the
   dropping stage kept every field a question needs; they cannot see the table
   format, because the round-trip check above them already proved it exact. So
   `src/eval_model.py` puts the documents to a reader that has never seen this
-  repo: **raw 72/72, compressed 71/72, stored 69/72** across eight payloads. The
-  one compressed miss is real and unfixed — `#keyed`'s synthetic `_key` column
-  gets reported as if it were data. The 16 comprehension questions still need a
-  judge. `docs/status.md` has the rest, including what that leaves unproven.
+  repo: **raw 75/75, compressed 75/75, stored 73/75** across eight payloads. The
+  compressed arm is exact — `#keyed`'s `_key` column stopped being reported as
+  data once the legend said outright that it is not a field. The stored arm's two
+  misses are arithmetic on a column that holds no handle, they are the same two
+  as the previous run, and the run fails its own bar because of them. The 16
+  comprehension questions still need a judge. `docs/status.md` has the rest,
+  including what that leaves unproven.
 - **Readable by a model, not just by a parser.** The document explains its own
   encodings, and that claim is checked by giving it to a model with no access to
-  this repo — five times so far, scored in `docs/cold-reads.md`. The fifth put
-  the same questions to the raw payload as a control, and the compressed
-  document lost one answer out of 72.
+  this repo — seven times so far, scored in `docs/cold-reads.md`. Every one of
+  the first five found a real defect no automated gate could see; the last two
+  were run to check a fix and found none in the document.
 - **Every number measured, never copied.** Including from Headroom, whose
   thresholds would reject most of the results above (`docs/thresholds.md`).
 

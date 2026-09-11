@@ -10,12 +10,12 @@ that were never on disk (see `docs/thresholds.md`).
 | `github_issues.json` | bare list of records | 50,031 | 22,372 | **55.3%** | 53.1% |
 | `hn_stories.json` | records under `hits` | 35,585 | 20,284 | **43.0%** | 43.0% |
 | `graphql_countries.json` | records under `data.countries` | 13,011 | 8,530 | **34.4%** | 11.3% |
-| `coingecko_prices.json` | record **map** | 1,226 | 851 | **30.6%** | 30.6% |
+| `coingecko_prices.json` | record **map** | 1,226 | 863 | **29.6%** | 30.6% |
 | `jsonplaceholder_posts.json` | 100 flat records | 8,761 | 6,462 | **26.2%** | 26.5% |
 | `pokeapi_ditto.json` | one deep object | 7,897 | 7,465 | **5.5%** | 5.8% |
 | `openmeteo_forecast.json` | already columnar | 3,638 | 3,638 | 0.0% | 0.0% |
 | `exchangerates_usd.json` | map of scalars | 1,420 | 1,420 | 0.0% | 0.0% |
-| **total** | | **121,569** | **71,022** | **41.6%** | 38.3% |
+| **total** | | **121,569** | **71,034** | **41.6%** | 38.3% |
 
 The `was` column is 2026-09-08, before `#dict`. Two payloads gained from it; the
 other six were already free of repeated values worth factoring out.
@@ -26,6 +26,16 @@ explains the repeating header. Together **+251 tokens, 0.3%** — bought by cold
 read #3, which miscounted a hand-counted total and could not verify an index 61
 deep into an unmarked array. `docs/cold-reads/2026-09-09.md` has the reasoning;
 `HEADER_REPEAT_EVERY` made the same trade at the same price.
+
+**A fifth payment, 2026-09-12: +12 tokens, and the whole point of it is where
+they land.** The `#keyed` legend clause now says the key column is *not a field
+of the record*, bought by cold read #5, which had the old wording in front of it
+and reported `_key` as a thirteenth field of the `ethereum` record
+(`docs/cold-reads/2026-09-11.md`). Twelve tokens is nothing set-wide — 71,022 →
+71,034, and 41.6% does not move — but `coingecko_prices` is 1,226 tokens to start
+with, so it pays **30.6% → 29.6%** alone. That is the honest shape of a
+legibility purchase: the set absorbs it and the one payload that needs it
+carries the bill.
 
 ## Where the savings come from, and which of them are lossy
 
@@ -38,7 +48,7 @@ The 41.6% above is three stages, and only the first is irreversible. Measured
 | `hn_stories.json` | 35,585 | 35,585 | 35,585 | 20,284 |
 | `jsonplaceholder_posts.json` | 8,761 | 7,162 | 7,162 | 6,462 |
 | the other five | | | *unchanged by the strip* | |
-| **total** | **121,569** | **115,549** | **101,003** | **71,022** |
+| **total** | **121,569** | **115,549** | **101,003** | **71,034** |
 
 - **compact** — re-serialised with `(",", ":")`. Pure formatting; nothing is lost.
 - **stripped** — `strip_boilerplate` drops keys. **This is the lossy stage**, and
@@ -46,7 +56,7 @@ The 41.6% above is three stages, and only the first is irreversible. Measured
 - **table** — the format this document describes. Exactly reversible.
 
 Set-wide the split is **6,020 tokens formatting (12%), 14,546 key-dropping (29%),
-29,981 the table (59%)** of the 50,547 saved. On `github_issues` alone, where the
+29,969 the table (59%)** of the 50,535 saved. On `github_issues` alone, where the
 strip stage does all of its work, it is 6,601 / 14,546 / 6,512 — the field
 deleter is the single largest contributor *on that payload*, and the honest way to
 say it is that the table format still earns 59% across the set.
@@ -139,7 +149,7 @@ first column is the dict key. `#keyed` names that column; decompression turns
 the rows back into a dict.
 
 Common in price feeds, config APIs and anything Firebase-shaped. CoinGecko went
-0% → 30.6%.
+0% → 29.6% (30.6% until the `#keyed` legend clause grew on 2026-09-12, above).
 
 ---
 
@@ -222,7 +232,7 @@ which is the cost that actually ships:
 | `hn_stories` | 15,172 | **75%** |
 | `graphql_countries` | 1,750 | 21% |
 | `pokeapi_ditto`, `coingecko_prices` | 0 | 0% |
-| **whole set** | **42,334** | **60%** of 71,022 |
+| **whole set** | **42,334** | **60%** of 71,034 |
 
 "Bulk" means free-text fields plus `children` — content a question is answered
 *from*, not *with*, and which no lossless rule reduces.
@@ -264,7 +274,7 @@ Every figure below is `margin --store` output, not a projection:
 | `hn_stories.json` | 20,284 | **4,240 — 88.1%** | 44 cells |
 | `jsonplaceholder_posts.json` | 6,462 | **2,497 — 71.5%** | 100 cells |
 | the other five | | unchanged, byte for byte | 0 |
-| **total** | **71,022** | **31,939 — 41.6% → 73.7%** | |
+| **total** | **71,034** | **31,951 — 41.6% → 73.7%** | |
 
 **This table read 31,104 / 74.4% until 2026-09-11, and it was the projection
 wearing the projection's own wrong row.** `src/measure_store.py` prices several
