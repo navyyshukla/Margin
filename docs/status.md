@@ -1,5 +1,37 @@
 # Where things stand
 
+> **A note on the PR numbers below.** They are this file's own sequence and it
+> is **not** GitHub's. It went one ahead at the store, because what this file
+> calls PR #5 (the format and the store) and PR #6 (MCP server and CLI wiring)
+> shipped as a single pull request — [GitHub #5][5], whose title carries the
+> 73.7% both halves were needed for. Everything after inherits the offset:
+>
+> | here | on GitHub |
+> |---|---|
+> | #1, #2, #3, #4 | [#1][1], [#2][2], [#3][3], [#4][4] — same |
+> | #5 *and* #6 | [#5][5] — one PR, both stages |
+> | #7 the model-in-the-loop eval | [#6][6] |
+> | #8 `_key` said plainly | [#7][7] |
+> | the miscount isolation | [#8][8] |
+> | #10 the judged half | [#9][9] |
+> | #11 the store becomes recoverable | [#10][10] |
+>
+> The headings are left as they are: the merge commits on `main` already cite
+> **GitHub's** numbers, so that path is correct for anyone reading the history,
+> and renumbering here would break every cross-reference in `docs/` to buy
+> nothing the table above does not.
+
+[1]: https://github.com/navyyshukla/Margin/pull/1
+[2]: https://github.com/navyyshukla/Margin/pull/2
+[3]: https://github.com/navyyshukla/Margin/pull/3
+[4]: https://github.com/navyyshukla/Margin/pull/4
+[5]: https://github.com/navyyshukla/Margin/pull/5
+[6]: https://github.com/navyyshukla/Margin/pull/6
+[7]: https://github.com/navyyshukla/Margin/pull/7
+[8]: https://github.com/navyyshukla/Margin/pull/8
+[9]: https://github.com/navyyshukla/Margin/pull/9
+[10]: https://github.com/navyyshukla/Margin/pull/10
+
 Moved out of `CLAUDE.md` on 2026-09-10. Status prose ages badly and CLAUDE.md is
 re-read into every session, so a stale claim there is a stale claim the model
 acts on — which has already happened once: the file asserted structural

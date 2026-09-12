@@ -1,7 +1,17 @@
-tiktoken
-mcp>=2.2
-# src/eval_model.py only. Not needed to compress anything — the seven gates and
-# the CLI never import it — so a clone that never runs the model eval can skip
-# it. `google-genai`, not `google-generativeai`: the latter is the older package
+# Pinned exactly, not floated. The numbers in docs/shapes.md and
+# docs/thresholds.md are token counts, and a token count is a fact about a
+# tokeniser as much as about a payload — `tiktoken` shipping a new
+# `cl100k_base` would move every figure in this repo without a line of code
+# changing. A project whose whole claim is "every number is measured, never
+# copied" cannot let its measuring instrument drift. Measured under Python
+# 3.12 with these versions (2026-09-12).
+tiktoken==0.14.0
+mcp==2.2.0
+
+# src/eval_model.py only, and only on the networked path — the import sits
+# inside the function that calls Gemini, so even `eval_model.py --self-test`,
+# which is one of the eight gates, never reaches it. Nothing that compresses
+# anything imports it, so a clone that never runs the model eval can skip this
+# line. `google-genai`, not `google-generativeai`: the latter is the older package
 # and does not have the Interactions API this uses.
-google-genai
+google-genai==2.22.0

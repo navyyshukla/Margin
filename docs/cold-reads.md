@@ -55,6 +55,13 @@ even which arm it is. That last exclusion matters as much as the others.
 | [2026-09-12](cold-reads/2026-09-12.md) | 10/10 | **9/10** | nothing about the format — only that two of the *questions* fail to name a currency; `_key` fixed and the reader said which clause fixed it |
 | [2026-09-12 sweep](cold-reads/2026-09-12-sweep.md) | **75/75** compressed, 73/75 stored, 75/75 raw | not asked | the stored arm miscounts the same two questions as read #5, with a different reader — counting, demonstrated twice |
 | [2026-09-12 judge](cold-reads/2026-09-12-judge.md) | **16/16** judged, every arm | not asked | the judged half measured for the first time — and the first pass was worthless until controls showed the judge could say *different* |
+| [2026-09-12 miscount](cold-reads/2026-09-12-miscount.md) | 24/25 readers clean | not asked | five arms, 25 readers: the document is not the cause, `[Nt]` is not, task size is not — and it is **not counting** either |
+
+Nine files, and the last two are not reads of the #1–#4 kind: the judge run
+measures the *marker*, and the miscount run is a five-arm isolation. They sit in
+the table anyway, because a scoreboard you have to read the prose to complete is
+not a scoreboard. Where the prose below says "seven reads", it means the seven
+that read a document to answer its questions — rows 1 through 7.
 
 ## Read #5 is a different instrument, and the table above flattens that
 

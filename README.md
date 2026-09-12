@@ -2,6 +2,9 @@
 
 *the room your context earns back*
 
+[![gates](https://github.com/navyyshukla/Margin/actions/workflows/gates.yml/badge.svg)](https://github.com/navyyshukla/Margin/actions/workflows/gates.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A personal, from-scratch project inspired by [Headroom](https://github.com/headroomlabs-ai/headroom):
 a small tool that shrinks the JSON API responses I paste into LLM conversations, without breaking
 the answers I get back. Built as a learning project — rule-based first, reversible always, one
@@ -100,9 +103,11 @@ here using the `*_url` convention — where it is the largest single contributor
   including what that leaves unproven.
 - **Readable by a model, not just by a parser.** The document explains its own
   encodings, and that claim is checked by giving it to a model with no access to
-  this repo — seven times so far, scored in `docs/cold-reads.md`. Every one of
-  the first five found a real defect no automated gate could see; the last two
-  were run to check a fix and found none in the document.
+  this repo. `docs/cold-reads.md` keeps the running score and is the single
+  source of truth for it — do not keep a count here that can drift from that
+  table. Every one of the first five found a real defect no automated gate
+  could see; the reads after them were run to check a fix and found none in the
+  document.
 - **Every number measured, never copied.** Including from Headroom, whose
   thresholds would reject most of the results above (`docs/thresholds.md`).
 
@@ -132,4 +137,25 @@ here using the `*_url` convention — where it is the largest single contributor
 | `docs/` | the written record — `docs/README.md` is the index of which file answers what |
 
 Run `./.githooks/install.sh` once per clone. `data/samples/` is gitignored — it
-holds real API responses.
+holds real API responses — so `bash scripts/fetch_samples.sh` refetches all
+eight from their original endpoints. They are live, so the shapes come back and
+the digits do not: refetched four days later, seven of the eight compressed to
+the same percentage and `github_issues` moved to 58.7% because they are
+different issues. The frozen figures stay in `docs/shapes.md`.
+
+## Running it yourself
+
+```bash
+uv venv .venv && uv pip install -r requirements.txt
+bash scripts/fetch_samples.sh            # the eight payloads
+.venv/bin/python src/property_test.py    # and the other four gates
+```
+
+The five gates that need no payload run on every push — that is the badge at
+the top. `src/eval_harness.py` needs the samples and so runs on this machine
+only; `.github/workflows/gates.yml` says why.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE). It is a finished personal learning project, so
+issues and pull requests are not being taken; fork it freely.

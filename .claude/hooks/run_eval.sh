@@ -11,7 +11,21 @@
 
 set -uo pipefail
 
-PROJECT_DIR="/Users/navyshukla/Margin Project"
+# Not hardcoded. This file used to open with an absolute path under one
+# machine's home directory, which made the hook a silent no-op in every other
+# clone — the `case` below would match nothing and fall through to `exit 0`,
+# reporting green while guarding nothing. That is Rule 12's failure exactly, and
+# it survived here because the one machine it worked on was the only one anyone
+# ran it from.
+#
+# $CLAUDE_PROJECT_DIR is what .claude/settings.json already uses to invoke this
+# script, so it is set whenever Claude Code is the caller. The git fallback is
+# for running it by hand. If neither resolves, say so — do not skip quietly.
+PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null)}"
+if [ -z "$PROJECT_DIR" ] || [ ! -d "$PROJECT_DIR/src" ]; then
+  echo "eval harness SKIPPED: cannot locate the repo (CLAUDE_PROJECT_DIR unset and not inside a git work tree)" >&2
+  exit 0
+fi
 PYTHON="$PROJECT_DIR/.venv/bin/python"
 
 # Every sample present, found by globbing rather than listed. A hook that only
