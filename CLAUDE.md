@@ -51,7 +51,8 @@ degrading answer quality on a fixed set of test questions. Inspired by Headroom
 ## Layout
 
 - `bin/margin` — the entry point; symlink it into `~/.local/bin` once (see `docs/cli.md`)
-- `src/` — flat, one file per concern. Nine files are the product (the pipeline, `cli.py`,
+- `src/` — flat, one file per concern, **27 files**. Ten are the product (the pipeline —
+  `compress`, `decompress`, `detect`, `render`, `store`, `table`, `tokens` — plus `cli.py`,
   `mcp_server.py`, `store_commands.py`); the other seventeen are the harness that guards it —
   the gates, the eval harness and its per-payload `checks_*.py`, the model-in-the-loop eval,
   and three measurement scripts. Deliberately not
@@ -59,8 +60,12 @@ degrading answer quality on a fixed set of test questions. Inspired by Headroom
   nothing here is packaged, while the move would rewrite ten harness files — and a mutation
   tester that stops finding its targets fails green
 - `docs/` — see `docs/README.md`
-- `data/samples/` — real JSON payloads used for testing (gitignored by default — see `.gitignore`)
-- `requirements.txt` — kept minimal; add a dependency only when a line of code actually needs it
+- `data/samples/` — real JSON payloads used for testing (gitignored by default — see `.gitignore`);
+  `scripts/fetch_samples.sh` refetches all eight, and is the only place the source URLs are written
+- `scripts/` — things that are neither product nor gate. One file so far
+- `.github/workflows/gates.yml` — the five sample-free gates, on every push
+- `requirements.txt` — kept minimal; add a dependency only when a line of code actually needs it.
+  **Pinned exactly** — a floating `tiktoken` would move every token count in `docs/`
 
 ## Harness
 
@@ -72,6 +77,10 @@ what you owe before changing the format, is in the `harness` skill.
 They do not all run at the same cadence: an edit to `src/*.py` runs five of them,
 and a commit runs all six. `mutation_test.py` is the commit-only one — the skill's
 table says why.
+
+A **push** runs five of them again in GitHub Actions (`.github/workflows/gates.yml`) — the
+five that need no sample payload. `eval_harness.py` is deliberately not among them and the
+workflow says why; it is not a weaker gate, it is a gate with an input CI does not have.
 
 The one thing you cannot discover from the repo: **run `./.githooks/install.sh` once per clone, and
 again after editing any hook** — hooks are copied into `.git/hooks`, not symlinked, so an edit does

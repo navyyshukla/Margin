@@ -18,6 +18,8 @@ keeping their own copy of this mapping.
 | Why does the stored arm miscount, and what was ruled out? | [`cold-reads/2026-09-12-miscount.md`](cold-reads/2026-09-12-miscount.md) — the five-arm isolation run |
 | How are the comprehension questions judged, and how good is that judge? | [`cold-reads/2026-09-12-judge.md`](cold-reads/2026-09-12-judge.md) |
 | What is done, and what is next? | [`status.md`](status.md) |
+| Where did the eight sample payloads come from, and how do I get them back? | [`../scripts/fetch_samples.sh`](../scripts/fetch_samples.sh) — the URLs, and what a refetch does and does not reproduce |
+| Which gates run on GitHub, and why not all of them? | [`../.github/workflows/gates.yml`](../.github/workflows/gates.yml) |
 
 ## The split, and why
 
