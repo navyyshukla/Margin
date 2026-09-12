@@ -17,6 +17,11 @@
 # API key, milliseconds. The full model eval (src/eval_model.py without the
 # flag) is networked and billable and is not a gate anywhere — see
 # docs/harness.md Rule 12.
+#
+# SHOWN A POSITIVE, not just a negative. On 2026-09-12 this workflow was run on
+# a throwaway branch with src/property_test.py raising on entry; it failed at
+# the `property test` step with that message and nothing after it ran. A green
+# check from a workflow nobody has ever seen go red is decoration (Rule 14).
 
 name: gates
 
@@ -32,10 +37,14 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v4
+      # v5/v6 rather than v4/v5: the older pair runs on Node 20, which the
+      # runners now force onto Node 24 with a deprecation annotation on every
+      # single run. A warning nobody can fix is a warning everyone learns to
+      # scroll past, and the next real one scrolls past with it.
+      - uses: actions/checkout@v5
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v6
 
       # 3.12 is what this project is developed and measured on. Pinned rather
       # than "latest": the numbers in docs/shapes.md were produced under one
