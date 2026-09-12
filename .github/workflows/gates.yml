@@ -37,14 +37,18 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      # v5/v6 rather than v4/v5: the older pair runs on Node 20, which the
-      # runners now force onto Node 24 with a deprecation annotation on every
-      # single run. A warning nobody can fix is a warning everyone learns to
-      # scroll past, and the next real one scrolls past with it.
+      # Both pinned past Node 20, which the runners now force onto Node 24 with
+      # a deprecation annotation on every single run. A warning nobody can fix
+      # is a warning everyone learns to scroll past, and the next real one
+      # scrolls past with it.
+      #
+      # checkout@v4 -> v5 cleared its annotation. setup-uv@v5 -> v6 did NOT —
+      # v6 still targets Node 20, which the first bump assumed away rather than
+      # checked. v10 is current (2026-09-10) and is what actually silences it.
       - uses: actions/checkout@v5
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v10
 
       # 3.12 is what this project is developed and measured on. Pinned rather
       # than "latest": the numbers in docs/shapes.md were produced under one
