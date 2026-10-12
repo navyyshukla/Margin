@@ -349,6 +349,41 @@ MUTATIONS = [
     # guarded — the command works from a directory that is not the repo — is
     # checked in src/package_test.py against an installed wheel, which is the
     # only place it can now be true or false.
+    # The four below target PACKAGING, and all four name package_test.py —
+    # nothing else in this repo can see them. Each is a failure that would reach
+    # a user as a broken `pip install margin` while all eight older gates stayed
+    # green (Rule 17).
+    # "the wheel stops shipping the UI's only file" belongs here and is NOT here
+    # yet, deliberately. It was written, run, and SURVIVED — because
+    # package_test.py's index.html check is conditional until margin/web/
+    # exists, so with no UI the gate prints a dash and asks nothing. The
+    # mutation was correct and the gate was blind, which is the whole argument
+    # against a check that cannot fail (Rule 14). It lands with the UI, in the
+    # same commit that makes that check unconditional.
+    Mutation(
+        "a bare-name import survives the package move",
+        "margin/cli.py",
+        "from .detect import detect_content_type",
+        "from detect import detect_content_type",
+        "the installed command compresses",
+        gate="package_test.py",
+    ),
+    Mutation(
+        "the console script points at nothing",
+        "pyproject.toml",
+        'margin = "margin.cli:main"',
+        'margin = "margin.cli:nonexistent_entry"',
+        "margin --help exits 0",
+        gate="package_test.py",
+    ),
+    Mutation(
+        "google-genai goes back into the runtime dependencies",
+        "pyproject.toml",
+        '  "mcp==2.2.0",\n]',
+        '  "mcp==2.2.0",\n  "google-genai==2.22.0",\n]',
+        "google-genai did not ship",
+        gate="package_test.py",
+    ),
 ]
 
 
@@ -365,6 +400,13 @@ def surviving(mutation):
         for directory in ("src", "margin"):
             shutil.copytree(os.path.join(REPO, directory), os.path.join(tree, directory),
                             ignore=shutil.ignore_patterns("__pycache__"))
+        # Files, not directories, and package_test.py cannot build without them:
+        # three of the packaging mutations target pyproject.toml and hatchling
+        # reads README.md for `readme = `. Without these the mutations would
+        # report "anchor text not found" — which this file treats as a loud
+        # failure rather than a skip, correct but for the wrong reason.
+        for name in ("pyproject.toml", "README.md"):
+            shutil.copy2(os.path.join(REPO, name), os.path.join(tree, name))
 
         target = os.path.join(tree, mutation.path)
         source = open(target, encoding="utf-8").read()
@@ -422,6 +464,13 @@ def baseline_passes(gates):
         for directory in ("src", "margin"):
             shutil.copytree(os.path.join(REPO, directory), os.path.join(tree, directory),
                             ignore=shutil.ignore_patterns("__pycache__"))
+        # Files, not directories, and package_test.py cannot build without them:
+        # three of the packaging mutations target pyproject.toml and hatchling
+        # reads README.md for `readme = `. Without these the mutations would
+        # report "anchor text not found" — which this file treats as a loud
+        # failure rather than a skip, correct but for the wrong reason.
+        for name in ("pyproject.toml", "README.md"):
+            shutil.copy2(os.path.join(REPO, name), os.path.join(tree, name))
         env = dict(os.environ)
         env["PYTHONPATH"] = tree          # same reason as apply_mutation's copy
         for gate in sorted(gates):
