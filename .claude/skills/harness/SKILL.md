@@ -1,11 +1,11 @@
 ---
 name: harness
-description: Margin's test-harness rulebook and the development→main merge gate. Use before editing src/*.py, bin/margin, any test file, or before merging to main.
+description: Margin's test-harness rulebook and the development→main merge gate. Use before editing margin/*.py, src/*.py, pyproject.toml, any test file, or before merging to main.
 ---
 
 # The harness
 
-Eight gates and sixteen rules. This file is the **procedure** — what to do. The
+Ten gates and seventeen rules. This file is the **procedure** — what to do. The
 **record** — the failure that bought each rule — is `docs/harness.md`, and it is
 cited by number from **76 places across 20 files** outside itself, 46 of them in
 `src/*.py` (re-measured 2026-09-11; this line said 27 and 20, which was wrong in
@@ -17,22 +17,32 @@ restate a rule here in a form that could drift from it.
 | `src/property_test.py` | Does the format survive shapes nobody wrote down? | no — generates its own | edit + commit |
 | `src/cli_test.py` | Does the tool keep the promises the tool makes? | no — generates its own | edit + commit |
 | `src/mcp_test.py` | Does the fetch tool resolve what the document promises? | no — builds its own | edit + commit |
+| `src/web_test.py` | Does the page agree with the CLI, at the HTTP boundary? | no — inline | edit + commit |
+| `src/package_test.py` | Does the thing a stranger installs actually work? | no — inline | **commit only** |
 | `src/eval_harness.py` | Do the answers survive on the payloads I have? | yes | edit + commit |
 | `src/eval_model.py --self-test` | Can the eval's verdict still refuse? | no — pure functions | edit + commit |
 | `src/mutation_test.py` | Can the other gates still fail? | no — mutates the source | **commit only** |
 | `.claude/hooks/run_eval.sh` | Did Claude's last edit break any of them? | no | every `src/*.py` edit |
 | `.githooks/pre-commit` | Is this commit allowed to exist? | no | every commit |
 
-**The edit chain measures 17.0s; the commit chain about 62s** (2026-09-11 —
+`package_test.py` is the second commit-only gate, for mutation_test's reason and
+not a new one: it builds a wheel and installs it into a fresh venv, which is ~20s
+on every edit. It runs at the commit boundary and on every push, and CI is where
+it earns most — that runner is Linux and this is developed on macOS (Rule 17).
+
+**The edit chain measures 17.0s; the commit chain about 62s** (2026-09-11, before
+`web_test.py` and `package_test.py` existed — re-time before quoting either
+number as current.) Original breakdown (
 mutation ~45, property ~11, cli 3.6, mcp 1.4, eval over all eight payloads 1.1;
 ±10% run to run, so the ratio is the point, not the decimal). `mutation_test.py`
 is roughly three quarters of the total and asks a question about *the gates*, not
 about the edit in front of you, so since 2026-09-11 it runs at the commit boundary
 only. That is a cadence change, not a skip — no commit reaches `main` without it.
 
-Run them by hand with `source .venv/bin/activate` then
-`python src/{property_test,cli_test,mcp_test,mutation_test}.py`; `eval_harness.py`
-takes a payload path, so loop it over `data/samples/*.json`.
+Run them by hand with `PYTHONPATH="$PWD" .venv/bin/python src/<gate>.py`;
+`eval_harness.py` takes a payload path, so loop it over `data/samples/*.json`.
+The `PYTHONPATH` is not optional — the gates import the product as `margin.*` and
+must resolve it here rather than through whatever is installed (Rule 17).
 
 ---
 
@@ -112,7 +122,7 @@ reason it is a copy rather than `core.hooksPath` is in a comment at the top of
 
 ---
 
-## The sixteen rules, one line each
+## The seventeen rules, one line each
 
 Full text and the failure behind each: `docs/harness.md`.
 
@@ -145,3 +155,6 @@ Full text and the failure behind each: `docs/harness.md`.
 16. A check downstream of an equality assertion tests only what the assertion
     could not see. Before citing a check count as evidence, name what would have
     to break for those checks to fail.
+17. A gate that runs inside the repo cannot see the thing you ship. Build it,
+    install it somewhere with no path home, and drive that — and pin both
+    `PYTHONPATH` **and cwd**, because `-m` puts the working directory first.

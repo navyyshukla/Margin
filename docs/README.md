@@ -6,12 +6,13 @@ keeping their own copy of this mapping.
 | Question | File |
 |---|---|
 | What do I have to do before changing the format, a threshold or a hook? | the **`harness` skill** (`.claude/skills/harness/SKILL.md`) — the procedure |
-| Why does that rule exist? What failure bought it? | [`harness.md`](harness.md) — the record, 16 rules, cited by number from 76 places across 20 files outside itself |
+| Why does that rule exist? What failure bought it? | [`harness.md`](harness.md) — the record, 17 rules, cited by number from 76 places across 20 files outside itself (that citation count was measured 2026-09-11 and Rule 17's own citations are not in it) |
 | Which API shapes are handled, and why are two of them 0%? | [`shapes.md`](shapes.md) |
 | What does Margin throw away, and what can I no longer ask? | [`shapes.md`](shapes.md) — *What is thrown away* |
 | Which stage earns which share of the savings? | [`shapes.md`](shapes.md) — *Where the savings come from* |
 | Where did this number come from? | [`thresholds.md`](thresholds.md) |
 | What does `margin` exit, and what does the pipe guarantee? | [`cli.md`](cli.md) |
+| How do I install it, and what are `margin web` and `margin mcp`? | [`../README.md`](../README.md) for the install; [`cli.md`](cli.md) for why each subcommand exists |
 | How does the store work, and how does a model reach it? | [`store.md`](store.md) |
 | How do I run a cold read, and what have they found? | [`cold-reads.md`](cold-reads.md) |
 | What did one particular cold read find? | `cold-reads/YYYY-MM-DD.md` — [#1](cold-reads/2026-09-08.md), [#2](cold-reads/2026-09-08b.md), [#3](cold-reads/2026-09-09.md), [#4](cold-reads/2026-09-10.md), [#5](cold-reads/2026-09-11.md), [#6](cold-reads/2026-09-12.md), [#7](cold-reads/2026-09-12-sweep.md) |

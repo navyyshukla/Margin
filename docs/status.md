@@ -309,6 +309,81 @@ by any other means.**
       (promising and entirely unmeasured, which is the project's standing bar —
       the same call `graphql_countries.emoji` got).
 
+## PR #12 — shipped, and a gate that can see the shipped thing (2026-10-12)
+
+This file called the project finished on 2026-09-12, and against the scope
+`CLAUDE.md` set, it was. **This is a new scope, chosen rather than drifted into:**
+a stranger can now `pip install margin`, and `margin web` shows them what a
+payload saved. The "Done" section below is left exactly as it was — it was true
+about the scope it describes.
+
+- [x] **The product is a package.** Ten files moved to `margin/`; the seventeen
+      harness files stayed in `src/` and import `margin.*`, which is why this
+      rewrote ten files and not twenty-seven. `bin/margin` is gone, replaced by
+      `[project.scripts]`. `margin/` is **12 modules** now and `src/` is **19
+      files** (counted off the repo 2026-10-12, not carried over).
+
+      `bin/margin`'s own comment had declined packaging, correctly: `src/` was
+      flat modules importing by bare name, so a console script meant either
+      restructuring everything the harness guards or putting `table` and `render`
+      into site-packages under names anything could collide with. That argument
+      held while nothing was packaged. It inverts the moment packaging is the
+      goal, and the rewritten comment says so rather than disappearing.
+
+- [x] **A ninth and tenth gate.** `src/web_test.py` drives the page over HTTP;
+      `src/package_test.py` builds a wheel, installs it into a venv with no path
+      back into this repo, and drives the installed command. **Mutations 31 →
+      40**, all caught by the check named for each. The retired one is
+      `bin/margin`'s symlink loop, gone with the file — a pip console script is
+      not ours to break.
+
+- [x] **`margin web`**, stdlib only: no new dependency, no build step, nothing
+      loaded from the network, `127.0.0.1` only and no `--host` flag. It calls
+      `compress_json`, so there is one compressor and the gates that guard it
+      guard the page. Verified against real payloads — `github_issues` 50,031 →
+      22,372 (**55.3%**) and `openmeteo` **0.0%**, both identical to what the CLI
+      prints and to `docs/shapes.md`'s frozen figures.
+
+- [x] **`margin mcp`**, because packaging took the old entry point away: a client
+      used to be pointed at a path inside this repo, and after `pip install`
+      there is no such path. Same bar the four store subcommands cleared.
+
+- [x] **The lossy stage reports what it took**, which nothing did before — the
+      CLI was silent and `docs/shapes.md` carried the warning instead. Fine while
+      everyone who got here had read a doc; not fine with a Copy button on
+      screen.
+
+**Four things would have failed green, and the record is that three of them
+actually did before anything caught them:**
+
+1. `run_eval.sh`'s `case` matched `src/*.py` only, so after the move an edit to
+   `margin/compress.py` ran **no gate at all** and reported nothing. Observed,
+   not theorised.
+2. A function-level `import render` in `table.py` survived the first rewrite
+   pass. `compress_json` caught the `ModuleNotFoundError` and emitted plain JSON
+   — correct behaviour — and `property_test` caught it as a broken round-trip on
+   24 cases. Rule 1 earning its keep.
+3. `python -m pkg.mod` prepends the **working directory** to `sys.path` ahead of
+   `PYTHONPATH`. `mutation_test` runs each gate from the real repo, so the gates
+   imported the real `margin/` out of the scratch tree and **14 of 30 mutations
+   came back SURVIVED**. Both gates pin `cwd` now.
+4. The mutation for "the wheel stops shipping the UI's only file" **SURVIVED**
+   when first run, because the check it targets was conditional on the file
+   existing. Withheld rather than committed against a blind check, and landed in
+   the commit that made the check unconditional.
+
+All four are in `docs/harness.md` as **Rule 17** and its corollaries.
+
+**Open, and not fixed or affected by any of this:** the stored arm still fails
+its own bar at 73/75, and the judge still shares a model family with the
+answerer. Both unchanged, both still stated below.
+
+**Not done yet:** the PyPI upload. It happens after a hand-install of the built
+wheel on this machine, so the first thing published is a version that has been
+used rather than only built. The name `margin` was free on PyPI as of 2026-10-12
+(its JSON API returns 404); PyPI can still refuse a name as too close to an
+existing one, and only the first upload proves otherwise.
+
 ## Done (2026-09-12)
 
 **The project is finished.** Not "no ideas left" — the scope CLAUDE.md set is
@@ -322,6 +397,12 @@ met and measured:
 | answers, judged | **16/16** on every arm, behind a judge gated by controls |
 | the harness | 8 gates, 80 checks, 31 mutations, all caught |
 | cold reads | 8, every one of the first five finding a defect no gate could see |
+
+**These were the numbers on 2026-09-12 and they are left as they were.** For the
+current ones read PR #12 above, which moved the harness to 10 gates and 40
+mutations; the 80 checks and the eight cold reads are unchanged. A dated table is
+a record, not a status line — re-measure rather than quote either of these
+(Rule 5).
 
 **Two things are open and neither is work anyone is waiting on:**
 
