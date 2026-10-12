@@ -1,17 +1,20 @@
-# Pinned exactly, not floated. The numbers in docs/shapes.md and
+# The runtime dependencies live in pyproject.toml now, which is the single
+# list; this file installs the project itself plus the dev extra the harness
+# needs. Two hand-maintained lists of the same pins is how they diverge, and
+# the pins are load-bearing here: the numbers in docs/shapes.md and
 # docs/thresholds.md are token counts, and a token count is a fact about a
-# tokeniser as much as about a payload — `tiktoken` shipping a new
-# `cl100k_base` would move every figure in this repo without a line of code
-# changing. A project whose whole claim is "every number is measured, never
-# copied" cannot let its measuring instrument drift. Measured under Python
-# 3.12 with these versions (2026-09-12).
-tiktoken==0.14.0
-mcp==2.2.0
-
-# src/eval_model.py only, and only on the networked path — the import sits
-# inside the function that calls Gemini, so even `eval_model.py --self-test`,
-# which is one of the eight gates, never reaches it. Nothing that compresses
-# anything imports it, so a clone that never runs the model eval can skip this
-# line. `google-genai`, not `google-generativeai`: the latter is the older package
-# and does not have the Interactions API this uses.
-google-genai==2.22.0
+# tokeniser as much as about a payload. tiktoken shipping a new cl100k_base
+# would move every figure in this repo without a line of code changing. The
+# comment that used to carry that reasoning now sits beside the pins it
+# explains, in pyproject.toml.
+#
+# -e so the harness imports the working tree rather than a copy: src/*.py does
+# `from margin.compress import ...`, and a non-editable install would leave the
+# gates grading whatever was installed last. The gates do not RELY on this —
+# every one of them pins PYTHONPATH and cwd to the tree it is grading, because
+# pre-commit runs them against a scratch checkout of the index where an
+# installed copy would be the wrong code entirely.
+#
+# Measured under Python 3.12 (2026-09-12); pyproject.toml's requires-python
+# states that floor.
+-e .[dev]
