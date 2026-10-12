@@ -178,6 +178,27 @@ def main():
         check("tiktoken and mcp did ship", {"tiktoken", "mcp"} <= installed,
               f"installed: {sorted(installed)}")
 
+        # JSON-RPC over a pipe, against the INSTALLED server. src/mcp_test.py
+        # already drives the protocol in depth; what this asks is narrower and
+        # only answerable here — that `margin mcp` is reachable at all once the
+        # code lives inside a tool venv whose path nobody can predict. Before
+        # packaging, a client was pointed at a path in this repo; there is no
+        # such path now.
+        #
+        # 2025-06-18 is the version src/mcp_test.py speaks; keeping one number
+        # in two files would be two numbers eventually.
+        hello = json.dumps({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                       "clientInfo": {"name": "package_test", "version": "0"}},
+        }) + "\n"
+        done = subprocess.run([margin, "mcp"], input=hello.encode(),
+                              capture_output=True, timeout=60,
+                              cwd=os.path.dirname(margin), check=False)
+        check("margin mcp answers an initialize over stdio",
+              b'"result"' in done.stdout,
+              f"stdout={done.stdout[:200]!r} stderr={done.stderr[:300]!r}")
+
         # 0 or 1 both mean it ran: fsck exits 1 when content a document needs is
         # gone, and a store that does not exist yet is not a failure of fsck.
         # What this rules out is 2 (called wrong) and a traceback.

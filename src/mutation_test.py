@@ -361,6 +361,14 @@ MUTATIONS = [
     # against a check that cannot fail (Rule 14). It lands with the UI, in the
     # same commit that makes that check unconditional.
     Mutation(
+        "margin mcp is treated as a filename again",
+        "margin/cli.py",
+        '    if argv and argv[0] in LAZY_COMMANDS:',
+        '    if False:',
+        "margin mcp answers an initialize",
+        gate="package_test.py",
+    ),
+    Mutation(
         "a bare-name import survives the package move",
         "margin/cli.py",
         "from .detect import detect_content_type",

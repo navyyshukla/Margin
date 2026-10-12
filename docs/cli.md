@@ -192,6 +192,21 @@ ambiguity is real and this is where it is written down. `margin f.json` is
 byte-identical to what it always was; the dispatch happens before anything else
 looks at argv.
 
+**`margin mcp` (2026-10-12) is a fifth, and it clears the same bar.** Before
+packaging, an MCP client was pointed at a path inside this repo. After
+`pip install margin` there is no such path — the code sits in a tool venv nobody
+can predict — so refusing this subcommand does not cost keystrokes, it costs the
+feature. Same test the four above passed.
+
+It also turned the ambiguity above from a stated cost into an observed one. The
+first run of `src/package_test.py`'s new check invoked `margin mcp` with the
+installed venv's `bin/` as its working directory — and the `mcp` package puts a
+console script literally named `mcp` there. So margin read its own subcommand as
+a filename, found a shell script, and reported `not JSON — passed through
+unchanged`. That is the predicted failure, found by the gate written for the
+feature, on the first attempt. `margin ./mcp` and `margin < mcp` still reach the
+file.
+
 The bundle is **one JSON file**, not an archive: stored objects are UTF-8 text by
 construction, so a bundle is readable and diffable and there is no tar handling
 to get wrong. It is not a `#margin/v1` format element — no new header line, no
