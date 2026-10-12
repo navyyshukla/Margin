@@ -82,6 +82,10 @@ jobs:
       - name: MCP contract
         run: .venv/bin/python src/mcp_test.py
 
+      # Does the page keep the CLI's promises? (HTTP, on a localhost port)
+      - name: web contract
+        run: .venv/bin/python src/web_test.py
+
       # Does the thing a stranger installs actually work? Builds a wheel and
       # installs it into a clean venv with no path back into the checkout.
       # Here as well as locally because this runner is Linux and development

@@ -48,7 +48,7 @@ from .compress import compress_json, token_count
 from .detect import detect_content_type
 
 USAGE = ("usage: margin [-q] [--store] [<file.json>|-]   (with no path, reads stdin)\n"
-         "       margin fsck | gc | export | import | mcp")
+         "       margin fsck | gc | export | import | mcp | web")
 
 # Subcommands whose module is imported only when the word is actually used.
 #
@@ -68,7 +68,7 @@ USAGE = ("usage: margin [-q] [--store] [<file.json>|-]   (with no path, reads st
 # `mcp` — so margin read its own subcommand as a filename, found a shell
 # script, and passed it through as not-JSON. `margin ./mcp` and `margin < mcp`
 # still reach the file.
-LAZY_COMMANDS = {"mcp": "margin.mcp_server"}
+LAZY_COMMANDS = {"mcp": "margin.mcp_server", "web": "margin.web"}
 
 # --store is OFF by default, and that is the whole design of this flag.
 #

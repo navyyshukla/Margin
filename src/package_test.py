@@ -118,18 +118,15 @@ def main():
         with zipfile.ZipFile(wheel) as z:
             names = z.namelist()
         held = len([n for n in names if n.startswith("margin/")])
-        ui_exists = os.path.exists(os.path.join(REPO, "margin", "web", "index.html"))
-        if ui_exists:
-            check("margin/web/index.html is in the wheel",
-                  "margin/web/index.html" in names,
-                  f"wheel holds {held} margin/ files")
-        else:
-            # Conditional ONLY until Task 8 of
-            # docs/superpowers/plans/2026-10-12-shipping-and-local-ui.md lands.
-            # Delete this branch with that task — a check that cannot fail is
-            # not a check (Rule 14), and this one is the first failure this
-            # gate exists to catch.
-            print("  ----  margin/web/index.html: not written yet (Task 8)")
+        # Unconditional, and it was conditional for exactly as long as the file
+        # did not exist. While it was, the mutation written for it — a wheel
+        # built with margin/web excluded — SURVIVED, because the gate printed a
+        # dash instead of asking. That is the whole case against a check that
+        # cannot fail (Rule 14), and it is why the mutation and this line landed
+        # in the same commit.
+        check("margin/web/index.html is in the wheel",
+              "margin/web/index.html" in names,
+              f"wheel holds {held} margin/ files")
 
         try:
             margin = install(wheel, os.path.join(tmp, "venv"))
@@ -177,6 +174,47 @@ def main():
               f"installed: {sorted(installed)}")
         check("tiktoken and mcp did ship", {"tiktoken", "mcp"} <= installed,
               f"installed: {sorted(installed)}")
+
+        # `margin web` out of the installed wheel, which is the only place the
+        # question "does the UI ship" can be answered. The zip check above
+        # proves the file is in the archive; this proves the installed server
+        # can find it on disk and serve it. They are not the same claim — PAGE
+        # is built from margin/__file__, and a wheel that lands the file
+        # somewhere else satisfies the first and fails this.
+        #
+        # Port 0 is not an option here: `margin web` picks its own. So it is
+        # started, polled for the line it prints, and killed.
+        import re
+        import time
+        import urllib.request
+
+        web = subprocess.Popen([margin, "web"], stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE,
+                               cwd=os.path.dirname(margin),
+                               env=dict(os.environ, BROWSER="true"))
+        try:
+            url = None
+            deadline = time.time() + 30
+            while time.time() < deadline:
+                line = web.stderr.readline().decode()
+                found = re.search(r"http://127\.0\.0\.1:\d+", line)
+                if found:
+                    url = found.group(0)
+                    break
+                if web.poll() is not None:
+                    break
+            if url is None:
+                check("margin web serves its page from the installed wheel",
+                      False, f"no URL on stderr; exit={web.poll()}")
+            else:
+                with urllib.request.urlopen(url + "/", timeout=30) as r:
+                    page = r.read()
+                check("margin web serves its page from the installed wheel",
+                      r.status == 200 and b"<title>margin</title>" in page,
+                      f"status={r.status} {len(page)}B from {url}")
+        finally:
+            web.kill()
+            web.wait(timeout=30)
 
         # JSON-RPC over a pipe, against the INSTALLED server. src/mcp_test.py
         # already drives the protocol in depth; what this asks is narrower and

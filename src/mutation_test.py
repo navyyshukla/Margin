@@ -353,13 +353,52 @@ MUTATIONS = [
     # nothing else in this repo can see them. Each is a failure that would reach
     # a user as a broken `pip install margin` while all eight older gates stayed
     # green (Rule 17).
-    # "the wheel stops shipping the UI's only file" belongs here and is NOT here
-    # yet, deliberately. It was written, run, and SURVIVED — because
-    # package_test.py's index.html check is conditional until margin/web/
-    # exists, so with no UI the gate prints a dash and asks nothing. The
-    # mutation was correct and the gate was blind, which is the whole argument
-    # against a check that cannot fail (Rule 14). It lands with the UI, in the
-    # same commit that makes that check unconditional.
+    # Written at Task 4, SURVIVED, withheld, and now landing with the UI — the
+    # commit that made package_test.py's index.html check unconditional. While
+    # that check was conditional this mutation passed, because the gate printed
+    # a dash and asked nothing. Both halves had to arrive together or one of
+    # them was decoration (Rule 14).
+    Mutation(
+        "the wheel stops shipping the UI's only file",
+        "pyproject.toml",
+        '[tool.hatch.build.targets.wheel]\npackages = ["margin"]',
+        '[tool.hatch.build.targets.wheel]\npackages = ["margin"]\n'
+        'exclude = ["margin/web/*"]',
+        "index.html is in the wheel",
+        gate="package_test.py",
+    ),
+    Mutation(
+        "the page stops warning about keys it dropped",
+        "margin/web.py",
+        '        if note.startswith("dropped "):',
+        "        if False:",
+        "it names the keys the lossy stage took",
+        gate="web_test.py",
+    ),
+    Mutation(
+        "the body cap is removed",
+        "margin/web.py",
+        "        if length > MAX_BODY_BYTES:",
+        "        if False:",
+        "a body over the cap",
+        gate="web_test.py",
+    ),
+    Mutation(
+        "a taken port raises instead of falling back",
+        "margin/web.py",
+        "    except OSError:",
+        "    except NotImplementedError:",
+        "a taken port falls back",
+        gate="web_test.py",
+    ),
+    Mutation(
+        "the page's compressor is replaced by a second implementation",
+        "margin/web.py",
+        "        document, notes = compress_json(data, original_text=text)",
+        "        document, notes = (json.dumps(data), [])",
+        "byte-identical to the library's",
+        gate="web_test.py",
+    ),
     Mutation(
         "the drop stage stops reporting what it took",
         "margin/compress.py",

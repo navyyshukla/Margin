@@ -111,6 +111,17 @@ if ! "$PYTHON" "$SRC/mcp_test.py"; then
   exit 1
 fi
 
+# The HTTP boundary — a request body, a status code and a Content-Length exist
+# nowhere else. Sub-second and sample-free, so it runs in the per-edit hook too.
+echo "pre-commit: running web contract (against the staged content)..."
+if ! "$PYTHON" "$SRC/web_test.py"; then
+  echo "" >&2
+  echo "pre-commit: web contract failed — commit refused." >&2
+  echo "  The page no longer agrees with the CLI about a payload, or it lost" >&2
+  echo "  a guard a browser can trigger." >&2
+  exit 1
+fi
+
 # The fourth process boundary, and the only gate here that does not run against
 # this repo at all: it builds a wheel, installs it into a throwaway venv with no
 # path back, and drives the installed `margin`. Everything above can be green

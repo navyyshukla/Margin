@@ -115,6 +115,16 @@ fi
 # gate that gets bypassed, and a bypassed gate reports green while guarding
 # nothing. That is the same failure this file exists to prevent, one level up.
 
+# The fourth process boundary, and cheap enough for the per-edit chain: it
+# binds a localhost port, drives it over HTTP and shuts it down. The page is
+# where someone who never read docs/shapes.md meets the lossy stage, so a note
+# that stops appearing should be caught at edit time.
+if ! output=$("$PYTHON" "$PROJECT_DIR/src/web_test.py" 2>&1); then
+  echo "web contract FAILED after editing $file_path" >&2
+  echo "$output" >&2
+  exit 2
+fi
+
 # src/package_test.py deliberately does NOT run here either, for the same reason
 # as mutation_test.py above: it builds a wheel and installs it into a fresh venv,
 # which is ~20s on every edit. It runs at the commit boundary and on every push.
