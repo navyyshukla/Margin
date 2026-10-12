@@ -21,11 +21,11 @@ Usage: margin data/samples/some_response.json > compressed.txt
 import json
 import sys
 
-import render
-import store as store_module
-from decompress import decompress
-from tokens import token_count
-from table import MIN_ROWS_TO_TABULATE, build_table, find_record_array, same_json
+from . import render
+from . import store as store_module
+from .decompress import decompress
+from .tokens import token_count
+from .table import MIN_ROWS_TO_TABULATE, build_table, find_record_array, same_json
 
 NOISE_KEYS = {"node_id", "gravatar_id"}
 
@@ -262,24 +262,24 @@ if __name__ == "__main__":
     # write a document" that could drift — the same mistake Rule 4 records for
     # encode_cell and decode_cell, one layer up.
     #
-    # runpy, not `import cli; cli.main()`, and the difference is the point. The
-    # first version called main() but not die_on_broken_pipe(), so
+    # Reached as `python -m margin.compress`. It calls cli.main() rather than
+    # reimplementing anything, for the reason the first version got wrong: that
+    # one called main() but not die_on_broken_pipe(), so
     # `python src/compress.py f.json | head -1` still printed the exact
-    # traceback the change was written to remove — a second entry point is a
-    # second place to forget a line, which is the whole failure being fixed.
-    # Running cli.py *as __main__* means it does everything it does for
-    # `margin`, and there is no list of setup steps to keep in sync.
+    # traceback the change was written to remove. A second entry point is a
+    # second place to forget a line, so both lines are here and the list is two
+    # long.
     #
-    # It does NOT stop this file being loaded twice — an earlier version of this
-    # comment claimed it did, and `python -X importtime src/compress.py` says
-    # otherwise: this file stays registered as `__main__`, so cli.py's
-    # `from compress import ...` executes the body again under the name
-    # `compress`, giving two `_ENCODING` globals and two token_count caches.
-    # Only the `compress` copy is ever used, so it costs one extra import and
-    # nothing else. Recorded rather than quietly dropped, because a false
-    # invariant in a comment is worse than an unstated one (Rule 5).
-    import os
-    import runpy
+    # runpy.run_path was what did this until 2026-10-12, and packaging ended it:
+    # run_path on a module inside a package executes the file with no package
+    # context, so every `from .table import ...` in cli.py would fail. -m
+    # imports this module properly, which also retires the double-load this
+    # comment used to record — there is no second copy of the body under another
+    # name now, because `from .compress import ...` finds the one already in
+    # sys.modules.
+    import sys
 
-    runpy.run_path(os.path.join(os.path.dirname(os.path.abspath(__file__)), "cli.py"),
-                   run_name="__main__")
+    from .cli import die_on_broken_pipe, main
+
+    die_on_broken_pipe()
+    sys.exit(main())

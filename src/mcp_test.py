@@ -16,13 +16,20 @@ import subprocess
 import sys
 import tempfile
 
-import store as store_module
-from compress import compress_json
-from render import STORE_PREFIX, parse
-from tokens import token_count
+from margin import store as store_module
+from margin.compress import compress_json
+from margin.render import STORE_PREFIX, parse
+from margin.tokens import token_count
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SERVER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_server.py")
+# `-m margin.mcp_server`, not a path. Since 2026-10-12 the product is a package,
+# and running one of its files directly executes it with no package context, so
+# its relative imports fail. REPO goes on the child's PYTHONPATH for the same
+# reason PYTHON below is sys.executable: the gate must resolve the product
+# through the tree it was copied into, not through whatever is installed on the
+# machine — requirements.txt installs this project editable, so an unset
+# PYTHONPATH would point a scratch-tree run straight back at the working tree.
+SERVER = ["-m", "margin.mcp_server"]
 
 # sys.executable, not "<repo>/.venv/bin/python". The interpreter running this
 # file already has everything the server needs, and hardcoding the venv path
@@ -48,11 +55,15 @@ class Server:
     """The server as a subprocess, spoken to the way a client would."""
 
     def __init__(self, store_root):
-        env = dict(os.environ, MARGIN_STORE=store_root)
+        env = dict(os.environ, MARGIN_STORE=store_root, PYTHONPATH=REPO)
         self.process = subprocess.Popen(
-            [PYTHON, SERVER],
+            [PYTHON, *SERVER],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            env=env, text=True, bufsize=1,
+            # cwd=REPO as well as PYTHONPATH: `-m` prepends the working
+            # directory to sys.path ahead of PYTHONPATH, so without it a run out
+            # of mutation_test.py's scratch tree would import the real repo's
+            # margin/ and every mcp_server mutation would survive. Six did.
+            env=env, cwd=REPO, text=True, bufsize=1,
         )
         self._id = 0
 
@@ -226,7 +237,7 @@ def main():
             # The premise first: this batch has to exceed the cap, or the check
             # below is named for a limit it never reaches. Asserted against the
             # server's own constant rather than eyeballed.
-            from mcp_server import MAX_RESPONSE_TOKENS
+            from margin.mcp_server import MAX_RESPONSE_TOKENS
             index_now = store_module.FileStore(root).read_index(doc_id)
             batch = [f"{n:04d}" for n in range(2, len(index_now) + 1)]
             weight = sum(token_count(store_module.FileStore(root).get(index_now[i]))

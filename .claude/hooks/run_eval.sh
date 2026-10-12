@@ -28,6 +28,17 @@ if [ -z "$PROJECT_DIR" ] || [ ! -d "$PROJECT_DIR/src" ]; then
 fi
 PYTHON="$PROJECT_DIR/.venv/bin/python"
 
+# The product became a package on 2026-10-12, so every gate below does
+# `from margin.compress import ...`. PYTHONPATH pins that to THIS tree.
+#
+# requirements.txt installs the project editable, which would also make the
+# import resolve — and relying on that is the trap: a clone whose venv was built
+# without `-e .`, or one where the install went stale, would get
+# ModuleNotFoundError out of this hook instead of a gate result, and a hook that
+# errors is a hook whose output people learn to scroll past. Explicit, so the
+# per-edit chain does not depend on install state at all.
+export PYTHONPATH="$PROJECT_DIR"
+
 # Every sample present, found by globbing rather than listed. A hook that only
 # guarded one payload would miss a regression in the other, which is the whole
 # reason a second one exists — and a hardcoded list means a payload added later
@@ -47,16 +58,17 @@ fi
 
 file_path=$(jq -r '.tool_input.file_path // .tool_response.filePath // empty')
 
-# Only care about Python files under this project's src/, plus the launcher.
+# margin/*.py is the product and src/*.py is the harness; both matter here.
 #
-# bin/margin is not Python and not under src/, but it holds real logic — the
-# symlink-resolution loop and the venv path — and breaking it breaks the tool
-# just as thoroughly as breaking cli.py. Without this line, the one file whose
-# whole job is "find the repo from wherever you were invoked" was the one file
-# no gate ever ran on.
+# The bin/margin line that used to be here was removed on 2026-10-12 with the
+# file — a pip console script replaced it. Its reason for existing still
+# applies to the line above it: miss a directory and the files in it are the
+# ones no gate ever runs on. That was observed, not theorised, while making this
+# change: with the product moved to margin/ and this case still matching src/
+# alone, an edit to margin/compress.py ran nothing and reported nothing. Rule 12.
 case "$file_path" in
   "$PROJECT_DIR"/src/*.py) ;;
-  "$PROJECT_DIR"/bin/margin) ;;
+  "$PROJECT_DIR"/margin/*.py) ;;
   *) exit 0 ;;
 esac
 

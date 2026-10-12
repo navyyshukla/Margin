@@ -25,11 +25,12 @@ if [ "$branch" = "main" ]; then
   exit 1
 fi
 
-# Only run the harness when compression/eval code actually changed — plus
-# bin/margin, which is not Python but is the launcher, and breaking its symlink
-# resolution breaks the tool from every directory but the repo's own.
+# Only run the harness when compression/eval code actually changed. Both
+# directories: margin/ is the product and src/ is the harness, and since
+# 2026-10-12 a change to the product does not touch src/ at all. bin/margin used
+# to be the third entry here and went away with the file.
 staged_src=$(git diff --cached --name-only --diff-filter=ACM \
-  | grep -E '^(src/.*\.py|bin/margin)$' || true)
+  | grep -E '^(src/.*\.py|margin/.*\.py)$' || true)
 [ -n "$staged_src" ] || exit 0
 
 repo_root=$(git rev-parse --show-toplevel)
@@ -52,6 +53,17 @@ git checkout-index --prefix="$STAGED_SRC/" -a
 # The samples are gitignored, so they are not in the index — point the harness at
 # the real ones. They are inputs, not code under test.
 SRC="$STAGED_SRC/src"
+
+# PYTHONPATH, or this hook grades the wrong software while reporting green.
+#
+# The scratch tree holds the staged margin/ package, but `import margin` inside
+# it resolves through sys.path like any other import — and .venv has the project
+# installed editable, pointing at the WORKING TREE. So without this line a
+# commit that breaks margin/compress.py would be graded against the working
+# tree's copy, which is exactly the "test what is being committed, not what is
+# lying in the working tree" promise the comment above makes, defeated one
+# import layer further out. Rule 12.
+export PYTHONPATH="$STAGED_SRC"
 # Globbed, not listed: a payload added later would otherwise be silently
 # unguarded. nullglob so an empty data/samples/ yields nothing, not the pattern.
 shopt -s nullglob

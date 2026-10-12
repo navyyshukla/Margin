@@ -47,8 +47,8 @@ import json
 import os
 import tempfile
 
-import render
-from tokens import token_count
+from . import render
+from .tokens import token_count
 
 # Tokens a single cell must save before its content is worth moving out of the
 # document. Measured 2026-09-10 by src/measure_store.py, which renders the whole

@@ -36,6 +36,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
+    # The product is a package as of 2026-10-12 and the gates import it as
+    # `margin.*`. The venv below installs the project editable, which would also
+    # resolve it; this is explicit so a change to how the venv is built cannot
+    # turn five gates into five ModuleNotFoundErrors.
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+
     steps:
       # Both pinned past Node 20, which the runners now force onto Node 24 with
       # a deprecation annotation on every single run. A warning nobody can fix

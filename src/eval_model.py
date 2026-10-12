@@ -58,13 +58,13 @@ import sys
 import tempfile
 import time
 
-import mcp_server
-import render
-import store as store_module
-from compress import compress_json
-from detect import detect_content_type
-from table import same_json
-from tokens import token_count
+from margin import mcp_server
+from margin import render
+from margin import store as store_module
+from margin.compress import compress_json
+from margin.detect import detect_content_type
+from margin.table import same_json
+from margin.tokens import token_count
 
 # --- what answers, what judges -------------------------------------------
 
@@ -727,7 +727,7 @@ FETCH_SCRIPT = '''#!/usr/bin/env python
 import argparse, os, sys
 sys.path.insert(0, {src!r})
 os.environ["MARGIN_STORE"] = {store!r}
-import mcp_server
+from margin import mcp_server
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--document", required=True)

@@ -41,11 +41,11 @@ Usage:
 import signal
 import sys
 
-import render
-import store as store_module
-import store_commands
-from compress import compress_json, token_count
-from detect import detect_content_type
+from . import render
+from . import store as store_module
+from . import store_commands
+from .compress import compress_json, token_count
+from .detect import detect_content_type
 
 USAGE = ("usage: margin [-q] [--store] [<file.json>|-]   (with no path, reads stdin)")
 

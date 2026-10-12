@@ -30,12 +30,12 @@ import random
 import sys
 import tempfile
 
-import render
-import store
-from compress import compress_json, strip_boilerplate
-from render import FORMAT_MARKER, LEGEND_PREFIX
-from decompress import decompress
-from table import same_json
+from margin import render
+from margin import store
+from margin.compress import compress_json, strip_boilerplate
+from margin.render import FORMAT_MARKER, LEGEND_PREFIX
+from margin.decompress import decompress
+from margin.table import same_json
 
 TRIALS = 2000
 # Enough that a fresh run takes a couple of seconds and still explores widely.

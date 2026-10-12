@@ -50,11 +50,11 @@ import json
 import os
 import sys
 
-import render
-import store as store_module
-from compress import COMPACT, skeleton, strip_boilerplate
-from table import build_table, find_record_array
-from tokens import token_count
+from margin import render
+from margin import store as store_module
+from margin.compress import COMPACT, skeleton, strip_boilerplate
+from margin.table import build_table, find_record_array
+from margin.tokens import token_count
 
 # A 12-hex sample, kept only so report_encodings() has a fixed point to compare
 # widths against. It is NOT a recommendation: the shipped hash is 24 hex
