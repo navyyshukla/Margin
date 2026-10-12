@@ -115,6 +115,12 @@ fi
 # gate that gets bypassed, and a bypassed gate reports green while guarding
 # nothing. That is the same failure this file exists to prevent, one level up.
 
+# src/package_test.py deliberately does NOT run here either, for the same reason
+# as mutation_test.py above: it builds a wheel and installs it into a fresh venv,
+# which is ~20s on every edit. It runs at the commit boundary and on every push.
+# A gate that makes the loop painful is a gate that gets bypassed, and a
+# bypassed gate reports green while guarding nothing.
+
 # The third process boundary. cli_test covers argv and streams; this covers
 # JSON-RPC over a pipe, which is the only place the MCP protocol exists.
 if ! output=$("$PYTHON" "$PROJECT_DIR/src/mcp_test.py" 2>&1); then

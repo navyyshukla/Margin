@@ -111,6 +111,22 @@ if ! "$PYTHON" "$SRC/mcp_test.py"; then
   exit 1
 fi
 
+# The fourth process boundary, and the only gate here that does not run against
+# this repo at all: it builds a wheel, installs it into a throwaway venv with no
+# path back, and drives the installed `margin`. Everything above can be green
+# while `pip install margin` is broken — a missing index.html, a surviving
+# bare-name import, a dead console script (Rule 17).
+#
+# ~20s, which is why it is at this boundary and not in the per-edit hook.
+echo "pre-commit: running packaged install (builds a wheel)..."
+if ! "$PYTHON" "$SRC/package_test.py"; then
+  echo "" >&2
+  echo "pre-commit: the packaged install failed — commit refused." >&2
+  echo "  The wheel does not build, does not install clean, or the installed" >&2
+  echo "  command no longer works. See src/package_test.py." >&2
+  exit 1
+fi
+
 # Asks whether the gates above can still fail. Six checks in cli_test.py have
 # gone green while the behaviour they were named for was deleted; this breaks
 # each one on purpose and demands the matching check notice.
