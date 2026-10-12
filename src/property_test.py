@@ -965,6 +965,43 @@ def legend_explains_keyed_column(payload):
     return f"column {column} " in legend and "NOT a field of the record" in legend
 
 
+def dropped_keys_are_reported():
+    """The lossy stage has to say what it took, and stay quiet when it took
+    nothing.
+
+    Returns True, or a sentence naming what went wrong.
+
+    Rule 3's family: round-trip equality cannot see this. decompress() never had
+    these keys and never will, so the round-trip is exactly as green with the
+    report as without it. Nothing reported it until 2026-10-12 — the CLI is
+    silent and docs/shapes.md carries the warning instead — which was defensible
+    while every user had read a doc to get here, and stops being defensible for
+    a page with a Copy button on it. CLAUDE.md's first rule is reversibility and
+    never delete-and-hope; an unreported deletion is the second half of that.
+
+    Both directions are the check. A note that always fires carries no
+    information, and a reader who sees "4 keys dropped" under every payload
+    learns to stop reading it (Rule 14's shape, one level down).
+    """
+    payload = [
+        {"id": 1, "html_url": "http://x/1", "node_id": "n1", "title": "a"},
+        {"id": 2, "html_url": "http://x/2", "node_id": "n2", "title": "b"},
+        {"id": 3, "html_url": "http://x/3", "node_id": "n3", "title": "c"},
+    ]
+    _, notes = compress_json(payload)
+    reported = [n for n in notes if n.startswith("dropped ")]
+    if len(reported) != 1:
+        return f"expected exactly one 'dropped' note, got {reported} of {notes}"
+    if "html_url" not in reported[0] or "node_id" not in reported[0]:
+        return f"the note does not name both keys: {reported[0]!r}"
+
+    clean = [{"id": 1, "t": "a"}, {"id": 2, "t": "b"}, {"id": 3, "t": "c"}]
+    _, clean_notes = compress_json(clean)
+    if [n for n in clean_notes if n.startswith("dropped ")]:
+        return f"reported a drop on a payload with nothing to drop: {clean_notes}"
+    return True
+
+
 def type_claims_are_backed(payload):
     """No column may declare an array type it has no evidence for.
 
@@ -1129,6 +1166,10 @@ def main():
 
     if not abandoning_a_document_leaves_the_store_clean():
         failures.append(("STORE (abandoned document left content behind)", 0, []))
+
+    verdict = dropped_keys_are_reported()
+    if verdict is not True:
+        failures.append((f"DROP REPORTING ({verdict})", 0, []))
 
     for index, (payload, expected) in enumerate(EXPECTED_PATHS):
         found = path_chosen(payload)

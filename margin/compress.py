@@ -46,25 +46,42 @@ COMPACT = (",", ":")
 # padding in the output. Compact everywhere, and the thresholds re-derived.
 
 
-def strip_boilerplate(data, drop_bare_url=None):
+def strip_boilerplate(data, drop_bare_url=None, dropped=None):
     """Recursively drop link-template and opaque-ID keys from dicts/lists.
 
     drop_bare_url is decided once for the whole document and passed down; see
     uses_url_template_convention for why it is not decided per object.
+
+    `dropped`, when a set is passed, collects the key NAMES removed — not the
+    values, which is the point. This stage is the one irreversible thing in the
+    pipeline, and the names are what a caller needs in order to say what is
+    gone. Nothing reported them until 2026-10-12: the CLI was silent and
+    docs/shapes.md carried the warning instead, which held while everyone who
+    reached this code had read a doc to get here. `margin web` puts a Copy
+    button under the output for someone who has not.
+
+    Default None, not an empty set: a mutable default would accumulate across
+    calls, and the second payload of a process would inherit the first one's
+    keys.
     """
     if drop_bare_url is None:
         drop_bare_url = uses_url_template_convention(data)
 
+    def keep(k):
+        return (not k.endswith("_url")
+                and k not in NOISE_KEYS
+                and not (k == "url" and drop_bare_url))
+
     if isinstance(data, dict):
+        if dropped is not None:
+            dropped.update(k for k in data if not keep(k))
         return {
-            k: strip_boilerplate(v, drop_bare_url)
+            k: strip_boilerplate(v, drop_bare_url, dropped)
             for k, v in data.items()
-            if not k.endswith("_url")
-            and k not in NOISE_KEYS
-            and not (k == "url" and drop_bare_url)
+            if keep(k)
         }
     if isinstance(data, list):
-        return [strip_boilerplate(v, drop_bare_url) for v in data]
+        return [strip_boilerplate(v, drop_bare_url, dropped) for v in data]
     return data
 
 
@@ -167,14 +184,28 @@ def compress_json(data, original_text=None, store=None):
     format would ship looking green. The harness fails on a round-trip note for
     exactly that reason.
     """
-    stripped = strip_boilerplate(data)
+    dropped = set()
+    stripped = strip_boilerplate(data, dropped=dropped)
     as_json = json.dumps(stripped, separators=COMPACT)
+
+    # Prepended to EVERY return path's notes, including the fallbacks and the
+    # unchanged one. What the lossy stage took is a fact about the payload, not
+    # about whichever later stage happened to win — a document that fell back to
+    # plain JSON has lost exactly the same keys as one that tabulated, and
+    # "returned the input unchanged" is the one note it most needs beside it,
+    # because the input it returns is the STRIPPED input.
+    #
+    # Sorted, so the same payload produces the same note twice in a row; a set's
+    # iteration order would make the line move for no reason.
+    lost = ([f"dropped {len(dropped)} key(s) not recoverable: "
+             f"{', '.join(sorted(dropped))}"] if dropped else [])
 
     def result(text, notes):
         """Never hand back something longer than what we were given."""
         if original_text is not None and token_count(text) >= token_count(original_text):
-            return original_text, notes + ["no improvement — returned the input unchanged"]
-        return text, notes
+            return original_text, lost + notes + [
+                "no improvement — returned the input unchanged"]
+        return text, lost + notes
 
     rows, array_path, key_column = find_record_array(stripped)
     if rows is None:
@@ -252,6 +283,9 @@ def compress_json(data, original_text=None, store=None):
             store_module.commit(store, doc_id, pending)
         except Exception as exc:
             return result(as_json, [f"store write failed ({type(exc).__name__}: {exc})"])
+    # `notes` already carries `lost`: the success path reached here through
+    # result(text, []) above, which prepends it. Prepending again printed the
+    # line twice, which is what the check caught on the first run.
     return final, notes
 
 
