@@ -1,17 +1,26 @@
 # The harness, and the rule each part enforces
 
-Seven gates and sixteen rules. Each rule exists because something got past the
+Ten gates and seventeen rules. Each rule exists because something got past the
 gates before it, and each is written down with the failure that bought it — a
 rule whose reason is forgotten is a rule someone deletes.
+
+This header said "Seven gates and sixteen rules" until 2026-10-13, over a table
+missing three of them — including, by then, Rule 17's own gate, appended to this
+file in the commit that left the count alone. Found by review. It is Rule 5 about
+this document: a count is a measurement, and the file that holds the rule is not
+exempt from it.
 
 | Gate | Asks | Sample payload? | Runs |
 |---|---|---|---|
 | `src/property_test.py` | Does the format survive shapes nobody wrote down? | no — generates its own | edit + commit |
 | `src/cli_test.py` | Does the tool keep the promises the tool makes? | no — generates its own | edit + commit |
 | `src/mcp_test.py` | Does the fetch tool resolve what the document promises? | no — builds its own | edit + commit |
+| `src/web_test.py` | Does the page agree with the CLI, at the HTTP boundary? | no — inline | edit + commit |
+| `src/package_test.py` | Does the thing a stranger installs actually work? | no — inline | **commit only** |
 | `src/eval_harness.py` | Do the answers survive on the payloads I have? | yes | edit + commit |
+| `src/eval_model.py --self-test` | Can the eval's verdict still refuse? | no — pure functions | edit + commit |
 | `src/mutation_test.py` | Can the other gates still fail? | no — mutates the source | **commit only** |
-| `.claude/hooks/run_eval.sh` | Did Claude's last edit break any of them? | no | every `src/*.py` edit |
+| `.claude/hooks/run_eval.sh` | Did Claude's last edit break any of them? | no | every `margin/*.py` or `src/*.py` edit |
 | `.githooks/pre-commit` | Is this commit allowed to exist? | no | every commit |
 
 The two cadences are 17.0s and about 62s (measured 2026-09-11, ±10% run to run).

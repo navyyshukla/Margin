@@ -83,7 +83,17 @@ def expected_after(payload):
 
 def main():
     print("web contract\n")
-    server = web.bind()
+    # Port 0, not web.DEFAULT_PORT. mutation_test.py runs all 40 mutations in
+    # parallel; four of them run this gate and five run package_test.py, which
+    # starts `margin web`. On the fixed port they race each other, bind() raises
+    # before the first check, the gate dies with no FAIL line, and mutation_test
+    # reports a hole that is not there — one commit in a few refused at random.
+    # Found by review 2026-10-13 after three runs gave 1 SURVIVED / 40 / 40.
+    #
+    # Nothing here is about the number 8731 anyway; the only check that cares
+    # about a specific port is the fallback one at the end, and it supplies its
+    # own taken port.
+    server = web.bind(0)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{server.server_port}"
     try:
@@ -207,7 +217,7 @@ def main():
 
     # A second bind on a port already in use must fall back, not raise. A
     # second `margin web` is a thing people do, not an error.
-    taken = web.bind()
+    taken = web.bind(0)
     try:
         # The OSError is caught HERE rather than left to propagate, and that is
         # not defensive habit. mutation_test.py demands that the check named for

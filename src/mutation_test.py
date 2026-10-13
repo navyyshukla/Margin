@@ -400,6 +400,14 @@ MUTATIONS = [
         gate="web_test.py",
     ),
     Mutation(
+        "the drop report is put back on the unchanged path, where it is false",
+        "margin/compress.py",
+        "            return original_text, notes + [",
+        "            return original_text, lost + notes + [",
+        "DROP REPORTING",
+        gate="property_test.py",
+    ),
+    Mutation(
         "the drop stage stops reporting what it took",
         "margin/compress.py",
         "    dropped = set()\n    stripped = strip_boilerplate(data, dropped=dropped)",

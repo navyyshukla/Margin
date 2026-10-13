@@ -999,6 +999,25 @@ def dropped_keys_are_reported():
     _, clean_notes = compress_json(clean)
     if [n for n in clean_notes if n.startswith("dropped ")]:
         return f"reported a drop on a payload with nothing to drop: {clean_notes}"
+
+    # And it must not claim a drop that did not happen, which is the harder
+    # half. compress_json has a path that returns `original_text` — the payload
+    # exactly as it ARRIVED, keys and all — when nothing it can do beats the
+    # bytes it was given. Prepending the note there says "these keys are gone"
+    # over output that still contains them, which is the honesty feature lying
+    # in the worse direction: claiming irreversible loss that did not occur,
+    # under a Copy button.
+    #
+    # Reaching that path needs the compact re-serialisation to cost MORE than
+    # the original, and non-ASCII is what does it: json.dumps escapes CJK to
+    # \\uXXXX by default, so the "compressed" form is longer. None of the eight
+    # samples is shaped like this (review, 2026-10-13).
+    raw = '{"a_url":"","t":"' + "日本語テキストです" * 3 + '"}'
+    text, notes = compress_json(json.loads(raw), original_text=raw)
+    claimed = [n for n in notes if n.startswith("dropped ")]
+    if text == raw and claimed:
+        return (f"claimed {claimed[0]!r} but returned the input with those keys "
+                f"still in it")
     return True
 
 

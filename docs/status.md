@@ -333,7 +333,7 @@ about the scope it describes.
 - [x] **A ninth and tenth gate.** `src/web_test.py` drives the page over HTTP;
       `src/package_test.py` builds a wheel, installs it into a venv with no path
       back into this repo, and drives the installed command. **Mutations 31 →
-      40**, all caught by the check named for each. The retired one is
+      41**, all caught by the check named for each. The retired one is
       `bin/margin`'s symlink loop, gone with the file — a pip console script is
       not ours to break.
 
@@ -399,7 +399,7 @@ met and measured:
 | cold reads | 8, every one of the first five finding a defect no gate could see |
 
 **These were the numbers on 2026-09-12 and they are left as they were.** For the
-current ones read PR #12 above, which moved the harness to 10 gates and 40
+current ones read PR #12 above, which moved the harness to 10 gates and 41
 mutations; the 80 checks and the eight cold reads are unchanged. A dated table is
 a record, not a status line — re-measure rather than quote either of these
 (Rule 5).

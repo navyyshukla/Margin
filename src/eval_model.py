@@ -10,7 +10,7 @@ about prompts and not about answers.
 It is non-deterministic, it needs a network, and it costs money. Each of those on
 its own is a reason a gate gets bypassed, and a bypassed gate reports green while
 guarding nothing (Rule 12). So it lives with src/measure_*.py — "nothing runs
-them but you" — and no hook calls it. The seven gates still answer "is the
+them but you" — and no hook calls it. The other gates still answer "is the
 document correct?"; this answers "is the document *readable*?", which is a
 different question and deserves a different cadence.
 

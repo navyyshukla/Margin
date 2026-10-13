@@ -5,7 +5,7 @@
 #
 # data/samples/ is gitignored (real third-party API responses; see .gitignore),
 # so a clone has none of them and cannot run src/eval_harness.py at all — five
-# of the eight gates still work, the answer-quality one does not. Worse, until
+# of the sample-free gates still work, the answer-quality one does not. Worse, until
 # this file existed the eight source URLs were written down nowhere: the
 # payloads were reproducible only by whoever remembered the query strings.
 # They are reconstructed here from the payloads themselves — the Algolia

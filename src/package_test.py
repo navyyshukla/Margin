@@ -49,6 +49,22 @@ PAYLOAD = json.dumps([
 failures = []
 
 
+def _clean_env():
+    """The environment an installed `margin` would really run in.
+
+    PYTHONPATH is stripped, and that single line is the difference between this
+    gate testing a wheel and this gate testing the repo. PYTHONPATH comes before
+    site-packages in sys.path, and every documented invocation of this file sets
+    it — so an inherited environment points the installed command straight back
+    at the working tree.
+
+    Stripped rather than overwritten with "": an empty PYTHONPATH still puts the
+    current directory on sys.path in some shells' hands, and the honest request
+    here is "no PYTHONPATH at all", which is what a user has.
+    """
+    return {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+
+
 def check(name, ok, detail=""):
     print(f"  {'PASS' if ok else 'FAIL'}  {name}")
     if not ok:
@@ -96,7 +112,7 @@ def run(margin, args, stdin=None, cwd=None):
     done = subprocess.run([margin, *args],
                           input=stdin.encode() if stdin else None,
                           capture_output=True, cwd=cwd or os.path.dirname(margin),
-                          check=False)
+                          check=False, env=_clean_env())
     return done.returncode, done.stdout, done.stderr
 
 
@@ -136,6 +152,29 @@ def main():
         check("the wheel installs into a clean venv", True)
         check("the console script exists", os.path.exists(margin), margin)
 
+        # FIRST, because every check below it is a lie if this one fails.
+        #
+        # PYTHONPATH beats site-packages in sys.path, and every documented way
+        # of running this gate sets it: the harness skill says
+        # `PYTHONPATH="$PWD" .venv/bin/python src/<gate>.py`, pre-commit exports
+        # the scratch tree, gates.yml sets the workspace, and mutation_test sets
+        # the mutated tree. So a child that inherits the environment imports the
+        # REPO's margin/ and this gate grades the repo it was supposed to be
+        # standing outside of — the one thing it exists not to do (Rule 17).
+        #
+        # Found by review, 2026-10-13, after the gate had been green for a day:
+        # the mutation that excludes margin/web from the wheel still passed
+        # `margin web serves its page`, because the server was importing the
+        # working tree and finding index.html there.
+        py = os.path.join(os.path.dirname(margin), "python")
+        done = subprocess.run([py, "-c", "import margin; print(margin.__file__)"],
+                              capture_output=True, text=True, check=False,
+                              cwd=os.path.dirname(margin), env=_clean_env())
+        resolved = done.stdout.strip()
+        check("the installed command imports the WHEEL, not this repo",
+              resolved.startswith(tmp) and not resolved.startswith(REPO),
+              f"margin resolved to {resolved!r}, wanted something under {tmp!r}")
+
         code, out, err = run(margin, ["--help"])
         check("margin --help exits 0 from outside the repo",
               code == 0 and b"usage: margin" in out,
@@ -158,7 +197,7 @@ def main():
              "print(same_json(decompress(sys.stdin.read()), json.loads(sys.argv[1])))",
              PAYLOAD],
             input=out.decode(), capture_output=True, text=True, check=False,
-            cwd=os.path.dirname(margin))
+            cwd=os.path.dirname(margin), env=_clean_env())
         check("the document round-trips inside the installed package",
               done.stdout.strip() == "True",
               f"stdout={done.stdout!r} stderr={done.stderr[-300:]!r}")
@@ -186,12 +225,13 @@ def main():
         # started, polled for the line it prints, and killed.
         import re
         import time
+        import urllib.error
         import urllib.request
 
         web = subprocess.Popen([margin, "web"], stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE,
                                cwd=os.path.dirname(margin),
-                               env=dict(os.environ, BROWSER="true"))
+                               env=dict(_clean_env(), BROWSER="true"))
         try:
             url = None
             deadline = time.time() + 30
@@ -207,11 +247,20 @@ def main():
                 check("margin web serves its page from the installed wheel",
                       False, f"no URL on stderr; exit={web.poll()}")
             else:
-                with urllib.request.urlopen(url + "/", timeout=30) as r:
-                    page = r.read()
+                # Wrapped, and src/web_test.py:get() carries the same note for
+                # the same reason: an HTTPError out of urlopen aborts main()
+                # with a traceback and prints NO failure line, so mutation_test
+                # — which demands the check named for a behaviour be the one
+                # that fails — reports SURVIVED while the bug is live. The
+                # missing-page path returns 500, which is exactly an HTTPError.
+                try:
+                    with urllib.request.urlopen(url + "/", timeout=30) as r:
+                        status, page = r.status, r.read()
+                except urllib.error.HTTPError as exc:
+                    status, page = exc.code, exc.read()
                 check("margin web serves its page from the installed wheel",
-                      r.status == 200 and b"<title>margin</title>" in page,
-                      f"status={r.status} {len(page)}B from {url}")
+                      status == 200 and b"<title>margin</title>" in page,
+                      f"status={status} {page[:160]!r} from {url}")
         finally:
             web.kill()
             web.wait(timeout=30)
@@ -232,7 +281,8 @@ def main():
         }) + "\n"
         done = subprocess.run([margin, "mcp"], input=hello.encode(),
                               capture_output=True, timeout=60,
-                              cwd=os.path.dirname(margin), check=False)
+                              cwd=os.path.dirname(margin), check=False,
+                              env=_clean_env())
         check("margin mcp answers an initialize over stdio",
               b'"result"' in done.stdout,
               f"stdout={done.stdout[:200]!r} stderr={done.stderr[:300]!r}")

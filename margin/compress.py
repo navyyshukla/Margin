@@ -188,12 +188,22 @@ def compress_json(data, original_text=None, store=None):
     stripped = strip_boilerplate(data, dropped=dropped)
     as_json = json.dumps(stripped, separators=COMPACT)
 
-    # Prepended to EVERY return path's notes, including the fallbacks and the
-    # unchanged one. What the lossy stage took is a fact about the payload, not
-    # about whichever later stage happened to win — a document that fell back to
-    # plain JSON has lost exactly the same keys as one that tabulated, and
-    # "returned the input unchanged" is the one note it most needs beside it,
-    # because the input it returns is the STRIPPED input.
+    # Prepended to every return path whose output actually went through the
+    # stripper — which is every path EXCEPT the one that hands back
+    # `original_text`. That exception is the whole subtlety, and the first
+    # version of this comment got it backwards: it claimed "the input it returns
+    # is the STRIPPED input", and it is not. `original_text` is the payload
+    # exactly as it arrived, keys and all.
+    #
+    # So reporting a drop there says "these keys are gone" over output that
+    # still contains them — the honesty feature lying, in the worse of the two
+    # directions, under `margin web`'s Copy button. Found by review 2026-10-13.
+    #
+    # Reaching that path takes a payload where the compact re-serialisation
+    # costs MORE than the original, which non-ASCII does: json.dumps escapes
+    # CJK to \\uXXXX, so the "compressed" form is longer and we correctly hand
+    # back what we were given. None of the eight samples is shaped that way,
+    # which is why no measurement caught it; property_test now asks directly.
     #
     # Sorted, so the same payload produces the same note twice in a row; a set's
     # iteration order would make the line move for no reason.
@@ -203,7 +213,8 @@ def compress_json(data, original_text=None, store=None):
     def result(text, notes):
         """Never hand back something longer than what we were given."""
         if original_text is not None and token_count(text) >= token_count(original_text):
-            return original_text, lost + notes + [
+            # No `lost` here: the bytes going back still carry those keys.
+            return original_text, notes + [
                 "no improvement — returned the input unchanged"]
         return text, lost + notes
 
