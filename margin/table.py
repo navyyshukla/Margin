@@ -17,7 +17,7 @@ key at all, which is exactly how Q4 and Q10 tell them apart.
 
 import json
 
-from tokens import token_count
+from .tokens import token_count
 # This file had no imports at all until dictionary_columns needed to compare two
 # encodings in tokens rather than in characters — the standing rule is that a
 # threshold is measured, and a character count is a proxy, not a measurement.
@@ -466,7 +466,7 @@ def _cells_cost(values):
     Rule 4, in the form it takes for a threshold: the gate has to price the
     output the encoder will actually produce, not a stand-in for it.
     """
-    from render import encode_cell
+    from .render import encode_cell
 
     type_name = column_type_name(values)
     return sum(token_count(encode_cell(v, type_name)) for v in values)

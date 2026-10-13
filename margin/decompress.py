@@ -14,9 +14,9 @@ Usage: python src/decompress.py compressed.txt
 import json
 import sys
 
-import render
-import store as store_module
-from table import rebuild_rows, rows_to_map
+from . import render
+from . import store as store_module
+from .table import rebuild_rows, rows_to_map
 
 
 def decompress(text, store=None):

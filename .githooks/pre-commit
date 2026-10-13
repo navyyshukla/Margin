@@ -25,11 +25,12 @@ if [ "$branch" = "main" ]; then
   exit 1
 fi
 
-# Only run the harness when compression/eval code actually changed — plus
-# bin/margin, which is not Python but is the launcher, and breaking its symlink
-# resolution breaks the tool from every directory but the repo's own.
+# Only run the harness when compression/eval code actually changed. Both
+# directories: margin/ is the product and src/ is the harness, and since
+# 2026-10-12 a change to the product does not touch src/ at all. bin/margin used
+# to be the third entry here and went away with the file.
 staged_src=$(git diff --cached --name-only --diff-filter=ACM \
-  | grep -E '^(src/.*\.py|bin/margin)$' || true)
+  | grep -E '^(src/.*\.py|margin/.*\.py)$' || true)
 [ -n "$staged_src" ] || exit 0
 
 repo_root=$(git rev-parse --show-toplevel)
@@ -52,6 +53,17 @@ git checkout-index --prefix="$STAGED_SRC/" -a
 # The samples are gitignored, so they are not in the index — point the harness at
 # the real ones. They are inputs, not code under test.
 SRC="$STAGED_SRC/src"
+
+# PYTHONPATH, or this hook grades the wrong software while reporting green.
+#
+# The scratch tree holds the staged margin/ package, but `import margin` inside
+# it resolves through sys.path like any other import — and .venv has the project
+# installed editable, pointing at the WORKING TREE. So without this line a
+# commit that breaks margin/compress.py would be graded against the working
+# tree's copy, which is exactly the "test what is being committed, not what is
+# lying in the working tree" promise the comment above makes, defeated one
+# import layer further out. Rule 12.
+export PYTHONPATH="$STAGED_SRC"
 # Globbed, not listed: a payload added later would otherwise be silently
 # unguarded. nullglob so an empty data/samples/ yields nothing, not the pattern.
 shopt -s nullglob
@@ -96,6 +108,33 @@ if ! "$PYTHON" "$SRC/mcp_test.py"; then
   echo "pre-commit: MCP contract failed — commit refused." >&2
   echo "  The fetch tool no longer resolves handles, or it lost the batch," >&2
   echo "  query or truncation behaviour a reader depends on." >&2
+  exit 1
+fi
+
+# The HTTP boundary — a request body, a status code and a Content-Length exist
+# nowhere else. Sub-second and sample-free, so it runs in the per-edit hook too.
+echo "pre-commit: running web contract (against the staged content)..."
+if ! "$PYTHON" "$SRC/web_test.py"; then
+  echo "" >&2
+  echo "pre-commit: web contract failed — commit refused." >&2
+  echo "  The page no longer agrees with the CLI about a payload, or it lost" >&2
+  echo "  a guard a browser can trigger." >&2
+  exit 1
+fi
+
+# The fourth process boundary, and the only gate here that does not run against
+# this repo at all: it builds a wheel, installs it into a throwaway venv with no
+# path back, and drives the installed `margin`. Everything above can be green
+# while `pip install margin` is broken — a missing index.html, a surviving
+# bare-name import, a dead console script (Rule 17).
+#
+# ~20s, which is why it is at this boundary and not in the per-edit hook.
+echo "pre-commit: running packaged install (builds a wheel)..."
+if ! "$PYTHON" "$SRC/package_test.py"; then
+  echo "" >&2
+  echo "pre-commit: the packaged install failed — commit refused." >&2
+  echo "  The wheel does not build, does not install clean, or the installed" >&2
+  echo "  command no longer works. See src/package_test.py." >&2
   exit 1
 fi
 

@@ -14,17 +14,29 @@ curl -s https://api.github.com/repos/python/cpython/issues | margin | pbcopy
 ## Install
 
 ```bash
-uv venv .venv && uv pip install -r requirements.txt   # once per clone
-ln -s "$PWD/bin/margin" ~/.local/bin/margin           # once per machine
+pip install margin
 ```
 
-`bin/margin` resolves symlinks to find the repo, so the link can live anywhere
-and the repo can move. Not a packaged console script: `src/` is flat modules
-importing each other by bare name, so `[project.scripts]` would mean either
-restructuring every file the harness guards into a package with relative
-imports, or installing `table`, `render` and `detect` as top-level
-site-packages modules under names anything could collide with. The wrapper
-costs ten lines and touches no import.
+**This section argued the opposite until 2026-10-12**, and the argument is kept
+rather than deleted because it was right at the time. It read: not a packaged
+console script, because `src/` is flat modules importing each other by bare name,
+so `[project.scripts]` would mean either restructuring every file the harness
+guards or installing `table`, `render` and `detect` as top-level site-packages
+modules under names anything could collide with — while `bin/margin` cost ten
+lines and touched no import.
+
+Every clause of that was true. What changed is the premise underneath it: the
+cost of restructuring is only a cost if nothing is packaged. Once `pip install
+margin` is the goal, it is the thing being bought. And the restructuring turned
+out to be smaller than feared — the ten product files moved into `margin/` with
+relative imports, the seventeen harness files stayed in `src/` and import
+`margin.*`, which is one line each.
+
+`bin/margin` is gone. Its four `cli_test` checks are gone too, and
+`src/package_test.py` holds what survives of them: "the command works from a
+directory that is not the repo" is now a property of an install rather than of
+our code, so it is checked against a built wheel in a throwaway venv. See
+`docs/harness.md` Rule 17.
 
 ## Usage
 
@@ -35,6 +47,7 @@ margin --store f.json
 
 margin fsck                      margin gc [--delete]
 margin export <doc-id> <file>    margin import <file>
+margin mcp                       margin web
 ```
 
 `--store` moves bulk cells out of the document and into a content store, taking
@@ -192,10 +205,81 @@ ambiguity is real and this is where it is written down. `margin f.json` is
 byte-identical to what it always was; the dispatch happens before anything else
 looks at argv.
 
+**`margin mcp` (2026-10-12) is a fifth, and it clears the same bar.** Before
+packaging, an MCP client was pointed at a path inside this repo. After
+`pip install margin` there is no such path — the code sits in a tool venv nobody
+can predict — so refusing this subcommand does not cost keystrokes, it costs the
+feature. Same test the four above passed.
+
+It also turned the ambiguity above from a stated cost into an observed one. The
+first run of `src/package_test.py`'s new check invoked `margin mcp` with the
+installed venv's `bin/` as its working directory — and the `mcp` package puts a
+console script literally named `mcp` there. So margin read its own subcommand as
+a filename, found a shell script, and reported `not JSON — passed through
+unchanged`. That is the predicted failure, found by the gate written for the
+feature, on the first attempt. `margin ./mcp` and `margin < mcp` still reach the
+file.
+
 The bundle is **one JSON file**, not an archive: stored objects are UTF-8 text by
 construction, so a bundle is readable and diffable and there is no tar handling
 to get wrong. It is not a `#margin/v1` format element — no new header line, no
 new cell encoding — so per `docs/cold-reads.md` it owes no cold read.
+
+## `margin web`, and the four decisions in it
+
+Added 2026-10-12. The CLI prints a percentage on stderr, which is the right
+output for a pipe and a poor way to *see* what this does. One page on
+`127.0.0.1`: paste JSON on the left, document on the right, and underneath the
+two token counts, a bar, the percentage and a Copy button. Nothing else — no
+tabs, no settings, no `--store` toggle, no per-stage breakdown.
+
+**It calls `compress_json`, the same function `cli.py` calls.** Not a copy, not a
+subprocess, and above all not a reimplementation in JavaScript. A browser-side
+compressor was the obvious way to avoid a server and it was rejected for the
+reason CLAUDE.md's scope rule exists: it would be a second implementation that no
+gate in this repo can see, free to drift from the Python one. There is one
+compressor, so the gates that guard it guard the page, and
+`src/web_test.py` asserts the page's document is byte-identical to the library's
+— with a mutation that swaps in a second implementation, caught by that check.
+
+**`127.0.0.1` only, and there is no `--host` flag.** `0.0.0.0` would put an
+unauthenticated endpoint that parses untrusted JSON onto whatever network the
+machine is on. Nothing here needs it, and this document's standing pattern is to
+decline flags that buy keystrokes.
+
+**The passthrough policy is not a second policy.** Not JSON, not UTF-8, and
+too-deep-to-parse all behave the way the exit-code table above settled them: the
+bytes come back, a note says why, and the status is a success. Two recursion
+guards, for the reason this document already records — there are two recursions
+and one payload can only ever reach one of them. The one unavoidable divergence
+is non-UTF-8 input: the CLI hands back the original bytes, and a JSON response
+has nowhere to put bytes that are not text, so the page shows what it could
+decode and says so.
+
+Empty body is the one place it differs on purpose: **400, not the CLI's exit 2**,
+because there is no argv here to be called wrong with.
+
+**A missing page file says which file is missing.** `margin web` out of a wheel
+that failed to ship `margin/web/index.html` returns a 500 naming the path.
+Letting the `open()` raise killed the connection with a traceback in the terminal
+the user is watching for the URL, and the browser showed "connection reset" —
+naming neither the file nor the cause. `src/package_test.py` exists to stop such
+a wheel existing; if one does, the person running it gets told what is wrong.
+
+Two numbers in `margin/web.py` are **bounds rather than measurements, and say so
+in their own comments**: the default port 8731 (unassigned in the IANA registry,
+stable enough to bookmark, falls back to an ephemeral port when taken — a second
+`margin web` is a thing people do, not an error) and a 64 MiB body cap (~300x the
+largest sample payload; the point is only that an unbounded read of
+`Content-Length` is an out-of-memory a browser tab can trigger).
+
+**It also prints the one thing the CLI never did.** When the lossy first stage
+fires, the page names the keys it took — `4 link keys dropped and not
+recoverable: html_url, …` — and shows nothing when it took nothing. The CLI now
+prints the same fact on stderr. Neither did before, which was defensible while
+everyone who reached this tool had read `docs/shapes.md` to get here; it stops
+being defensible with a Copy button on screen, and CLAUDE.md's first rule is
+reversibility and never delete-and-hope.
 
 ## Deliberately not built
 

@@ -32,8 +32,8 @@ import json
 import os
 import sys
 
-import render
-import store as store_module
+from . import render
+from . import store as store_module
 
 EXIT_USAGE = 2
 EXIT_PROBLEM = 1

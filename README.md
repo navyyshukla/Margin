@@ -19,18 +19,19 @@ model fetches from, and `docs/store.md` explains what that costs as well as what
 it saves.
 
 ```bash
-uv venv .venv && uv pip install -r requirements.txt   # once per clone
-ln -s "$PWD/bin/margin" ~/.local/bin/margin           # once per machine
+pip install margin
 ```
 
 ```bash
 curl -s https://api.github.com/repos/python/cpython/issues | margin | pbcopy
 margin response.json > compressed.txt
+margin web          # a page on 127.0.0.1 that shows what it saved
 ```
 
 With `--store` in use, four subcommands keep that store recoverable — `margin
 fsck`, `margin gc`, `margin export <doc-id> <file>`, `margin import <file>`.
-See `docs/cli.md` for why these earned a place the narrow CLI refused
+`margin mcp` runs the server a client fetches through, and `margin web` opens the
+page. See `docs/cli.md` for why these earned a place the narrow CLI refused
 `--decompress`.
 
 Reads a file or stdin. The document goes to stdout and everything else to
@@ -85,7 +86,11 @@ here using the `*_url` convention — where it is the largest single contributor
   them, so a compressed GitHub payload cannot answer "link me to issue 37508".
   Everything after that stage is exactly reversible, `decompress(compress(x))` is
   verified at runtime, and a transform that cannot be undone is not shipped past
-  that line. What goes and what it costs: `docs/shapes.md`.
+  that line. **Since 2026-10-12 it also says what it took** — `dropped 20 key(s)
+  not recoverable: avatar_url, …` on stderr, and one line under the output in
+  `margin web`. Nothing reported it before, which was defensible while everyone
+  who got here had read a doc first, and is not defensible with a Copy button on
+  screen. What goes and what it costs: `docs/shapes.md`.
 - **Never worse.** If nothing helps, the input comes back unchanged.
 - **Answers must not move, and a model was finally asked.** 80 checks assert the
   dropping stage kept every field a question needs; they cannot see the table
@@ -115,45 +120,52 @@ here using the `*_url` convention — where it is the largest single contributor
 
 | Path | What |
 |---|---|
-| `bin/margin` | the entry point; finds the repo from its own path |
-| `src/cli.py` | arguments, streams and exit codes — the only place input is read |
-| `src/compress.py` | the pipeline and its thresholds |
-| `src/table.py` | decides the table's shape; renders no text |
-| `src/tokens.py` | counting tokens, in one place |
-| `src/detect.py` | decides whether the input is JSON at all |
-| `src/render.py` | writes the document and reads it back, in one file so the two cannot drift |
-| `src/store.py` | the content store: bulk cells live here, not in the prompt |
-| `src/mcp_server.py` | the `fetch` tool — what makes Margin a tool the model calls |
-| `src/store_commands.py` | `fsck`, `gc`, `export`, `import` — what keeps the store recoverable |
-| `src/decompress.py` | the inverse |
+| `margin/cli.py` | arguments, streams and exit codes — the only place input is read |
+| `margin/compress.py` | the pipeline and its thresholds |
+| `margin/table.py` | decides the table's shape; renders no text |
+| `margin/tokens.py` | counting tokens, in one place |
+| `margin/detect.py` | decides whether the input is JSON at all |
+| `margin/render.py` | writes the document and reads it back, in one file so the two cannot drift |
+| `margin/store.py` | the content store: bulk cells live here, not in the prompt |
+| `margin/mcp_server.py` | the `fetch` tool — what makes Margin a tool the model calls |
+| `margin/store_commands.py` | `fsck`, `gc`, `export`, `import` — what keeps the store recoverable |
+| `margin/web.py` + `margin/web/index.html` | `margin web`: the page, stdlib only, calling the same `compress_json` the CLI calls |
+| `margin/decompress.py` | the inverse |
 | `src/eval_harness.py` | asks the questions before and after |
 | `src/eval_model.py` | asks a *model* the questions — three arms, and not a gate |
 | `src/property_test.py` | generates payloads trying to break the format |
 | `src/cli_test.py` | runs the CLI as a subprocess and checks what it promises |
 | `src/mcp_test.py` | drives the MCP server as a subprocess over JSON-RPC |
-| `src/mutation_test.py` | breaks the CLI on purpose and checks that cli_test.py notices |
+| `src/web_test.py` | drives the page over HTTP, and checks it agrees with the CLI |
+| `src/package_test.py` | builds a wheel, installs it in a clean venv, runs the installed command |
+| `src/mutation_test.py` | breaks the product on purpose and checks the named gate notices |
 | `src/checks_<payload>.py` | the expected answers for one sample, paired to it by name (eight of them) |
 | `src/measure_*.py` | one-off measurement scripts — not gates, nothing runs them but you (`measure_miscount.py` is the five-arm run that isolated the stored miscount) |
 | `docs/` | the written record — `docs/README.md` is the index of which file answers what |
 
-Run `./.githooks/install.sh` once per clone. `data/samples/` is gitignored — it
+Working on it? Run `./.githooks/install.sh` once per clone. `data/samples/` is gitignored — it
 holds real API responses — so `bash scripts/fetch_samples.sh` refetches all
 eight from their original endpoints. They are live, so the shapes come back and
 the digits do not: refetched four days later, seven of the eight compressed to
 the same percentage and `github_issues` moved to 58.7% because they are
 different issues. The frozen figures stay in `docs/shapes.md`.
 
-## Running it yourself
+## Working on it
 
 ```bash
-uv venv .venv && uv pip install -r requirements.txt
-bash scripts/fetch_samples.sh            # the eight payloads
-.venv/bin/python src/property_test.py    # and the other four gates
+uv venv .venv && uv pip install -r requirements.txt   # installs the project editable
+bash scripts/fetch_samples.sh                         # the eight payloads
+PYTHONPATH="$PWD" .venv/bin/python src/property_test.py   # and the other nine gates
 ```
 
-The five gates that need no payload run on every push — that is the badge at
-the top. `src/eval_harness.py` needs the samples and so runs on this machine
+Seven of the ten gates need no payload and run on every push — that is the badge
+at the top. `src/eval_harness.py` needs the samples and so runs on this machine
 only; `.github/workflows/gates.yml` says why.
+
+`PYTHONPATH` because the gates import the product as `margin.*` and must resolve
+it in the tree being graded, not through whatever is installed — `pre-commit`
+runs them against a scratch checkout of the index, where an installed copy would
+be the wrong code entirely.
 
 ## License
 

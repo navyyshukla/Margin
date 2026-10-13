@@ -1,0 +1,45 @@
+# Packaging, added 2026-10-12. bin/margin is gone; this file replaces it.
+#
+# hatchling rather than setuptools: it needs no MANIFEST.in to ship
+# margin/web/index.html — everything under the package directory goes into the
+# wheel by default, and a UI whose one HTML file is missing from the wheel is
+# the first failure src/package_test.py was written to catch.
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "margin"
+version = "1.0.0"
+description = "Compress JSON API responses before they go into an LLM prompt"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+authors = [{ name = "Naivedya Shukla" }]
+keywords = ["json", "compression", "llm", "tokens", "mcp"]
+
+# Pinned exactly, matching requirements.txt and for the same reason: the
+# numbers in docs/shapes.md are token counts, and a token count is a fact about
+# a tokeniser as much as about a payload. A floating tiktoken would move every
+# figure in this repo without a line of code changing.
+#
+# google-genai is NOT here. It is used by src/eval_model.py, which is harness
+# and is not shipped, and only on its networked path. A user who installs this
+# to compress JSON should not acquire a Gemini SDK.
+dependencies = [
+  "tiktoken==0.14.0",
+  "mcp==2.2.0",
+]
+
+[project.optional-dependencies]
+dev = ["google-genai==2.22.0"]
+
+[project.scripts]
+margin = "margin.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/navyyshukla/Margin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["margin"]

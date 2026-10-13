@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>margin</title>
+<!--
+  One file, and nothing loaded from the network: no CDN, no webfont, no
+  analytics. The page works on a plane, which is the only sane property for a
+  tool that runs on localhost. src/web_test.py asserts it by refusing any
+  absolute URL in this file.
+
+  No framework either. The whole interaction is "post the textarea, render six
+  numbers", and a build step for that would be a build step before every
+  release of a project that has none.
+-->
+<style>
+  :root {
+    --bg: #fcfcfa; --fg: #1a1a18; --dim: #6b6b64;
+    --line: #e2e2dc; --accent: #2f6f4f; --warn: #8a5a1a;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16160f; --fg: #ebebe4; --dim: #9a9a90;
+      --line: #2e2e26; --accent: #7fc49b; --warn: #d9a85a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif;
+    display: flex; flex-direction: column; height: 100vh;
+  }
+  header {
+    padding: 14px 16px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  }
+  h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .02em; }
+  header span { color: var(--dim); font-size: 13px; }
+  main { flex: 1; display: grid; grid-template-columns: 1fr 1fr; min-height: 0; }
+  section { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  section + section { border-left: 1px solid var(--line); }
+  label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--dim); padding: 10px 16px 6px;
+  }
+  textarea, pre {
+    flex: 1; margin: 0; padding: 0 16px 16px; border: 0; resize: none;
+    background: transparent; color: var(--fg);
+    font: 12px/1.6 var(--mono); overflow: auto; white-space: pre;
+  }
+  textarea:focus { outline: none; }
+  textarea::placeholder { color: var(--dim); }
+  /* Its own background and a stacking context. Without them the panes above
+     paint through it: the dropped-keys line can run to two or three wrapped
+     lines on a payload like GitHub's (20 keys), the footer grows, and the
+     textarea behind it showed through the text. Found by looking at the page
+     with a real payload in it, which no gate here can do. */
+  footer {
+    border-top: 1px solid var(--line); padding: 12px 16px;
+    background: var(--bg); position: relative; z-index: 1;
+    flex: 0 0 auto; max-height: 40vh; overflow-y: auto;
+  }
+  .row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .count { font: 13px var(--mono); color: var(--dim); }
+  .bar {
+    flex: 1; min-width: 120px; height: 8px; border-radius: 4px;
+    background: var(--line); overflow: hidden;
+  }
+  .bar i {
+    display: block; height: 100%; width: 0; background: var(--accent);
+    transition: width .25s ease;
+  }
+  .pct {
+    font-weight: 600; font-variant-numeric: tabular-nums;
+    min-width: 4.5em; text-align: right;
+  }
+  button {
+    font: inherit; padding: 6px 14px; border: 1px solid var(--line);
+    border-radius: 6px; background: transparent; color: var(--fg);
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .4; cursor: default; }
+  .note { color: var(--dim); font-size: 13px; margin-top: 8px; }
+  /* The keys come from the payload and there can be twenty of them, so this
+     wraps and breaks rather than running off the edge. */
+  .warn {
+    color: var(--warn); font-size: 13px; margin-top: 8px;
+    overflow-wrap: anywhere;
+  }
+  .warn code { font-family: var(--mono); }
+  @media (max-width: 720px) {
+    main { grid-template-columns: 1fr; }
+    section + section { border-left: 0; border-top: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>margin</h1>
+  <span>the room your context earns back</span>
+</header>
+<main>
+  <section>
+    <label for="in">your JSON</label>
+    <textarea id="in" spellcheck="false" autofocus
+      placeholder="paste a JSON API response"></textarea>
+  </section>
+  <section>
+    <label for="out">compressed</label>
+    <pre id="out"></pre>
+  </section>
+</main>
+<footer>
+  <div class="row">
+    <span class="count" id="count"></span>
+    <span class="bar"><i id="fill"></i></span>
+    <span class="pct" id="pct"></span>
+    <button id="copy" disabled>copy</button>
+  </div>
+  <div class="note" id="note"></div>
+  <div class="warn" id="warn"></div>
+</footer>
+<script>
+const $ = id => document.getElementById(id);
+let timer, last = null;
+
+// Debounced rather than per-keystroke: a paste fires one input event, but a
+// typed edit fires one per character and each costs a tokeniser pass over the
+// whole payload on the server.
+$("in").addEventListener("input", () => {
+  clearTimeout(timer);
+  timer = setTimeout(go, 250);
+});
+
+async function go() {
+  const raw = $("in").value;
+  if (raw === last) return;
+  last = raw;
+  if (!raw.trim()) return reset();
+
+  let r;
+  try {
+    const response = await fetch("/compress", { method: "POST", body: raw });
+    r = await response.json();
+  } catch (e) {
+    // The server is the process that served this page. If the fetch fails it
+    // has gone away, and saying so beats an empty panel the user reads as "my
+    // JSON produced nothing".
+    $("note").textContent = "margin is not responding — is it still running?";
+    return;
+  }
+  if (r.error) { reset(); $("note").textContent = r.error; return; }
+
+  $("out").textContent = r.document;
+  $("count").textContent = r.before
+    ? `${r.before.toLocaleString()} → ${r.after.toLocaleString()} tokens`
+    : "";
+  $("pct").textContent = r.before ? `${r.percent.toFixed(1)}%` : "";
+  $("fill").style.width = `${r.percent}%`;
+  $("copy").disabled = !r.document;
+  $("note").textContent = r.note || "";
+
+  // The one line of honesty, and it is shown only when the lossy first stage
+  // actually fired. A warning that is always on is a warning nobody reads.
+  // textContent per key, not an interpolated string: a key name comes from the
+  // pasted payload, and building markup out of it would let a crafted field
+  // name write HTML into this page.
+  const warn = $("warn");
+  warn.textContent = "";
+  if (r.dropped && r.dropped.length) {
+    const n = r.dropped.length;
+    warn.append(`${n} link key${n > 1 ? "s" : ""} dropped and not recoverable: `);
+    r.dropped.forEach((key, i) => {
+      if (i) warn.append(", ");
+      const code = document.createElement("code");
+      code.textContent = key;
+      warn.append(code);
+    });
+  }
+}
+
+function reset() {
+  $("out").textContent = "";
+  $("count").textContent = "";
+  $("pct").textContent = "";
+  $("note").textContent = "";
+  $("warn").textContent = "";
+  $("fill").style.width = "0";
+  $("copy").disabled = true;
+}
+
+$("copy").addEventListener("click", async () => {
+  await navigator.clipboard.writeText($("out").textContent);
+  $("copy").textContent = "copied";
+  setTimeout(() => ($("copy").textContent = "copy"), 1200);
+});
+</script>
+</body>
+</html>

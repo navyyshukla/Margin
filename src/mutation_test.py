@@ -65,7 +65,7 @@ class Mutation:
 MUTATIONS = [
     Mutation(
         "the compressor is replaced by cat",
-        "src/cli.py",
+        "margin/cli.py",
         '        document = text if text.endswith("\\n") else text + "\\n"\n'
         '        sys.stdout.buffer.write(document.encode("utf-8"))',
         "        sys.stdout.buffer.write(raw_bytes)",
@@ -73,21 +73,21 @@ MUTATIONS = [
     ),
     Mutation(
         "notes are written to stdout instead of stderr",
-        "src/cli.py",
+        "margin/cli.py",
         '            print(f"margin: {message}", file=sys.stderr)',
         '            print(f"margin: {message}")',
         "no note leaked into it",
     ),
     Mutation(
         "the unchanged path re-adds a trailing newline",
-        "src/cli.py",
+        "margin/cli.py",
         "    if text == raw_text:",
         "    if False:",
         "byte-identical to the input",
     ),
     Mutation(
         "SIGPIPE handling is removed",
-        "src/cli.py",
+        "margin/cli.py",
         '    if hasattr(signal, "SIGPIPE"):  # absent on Windows; this is a macOS tool\n'
         "        signal.signal(signal.SIGPIPE, signal.SIG_DFL)",
         "    pass",
@@ -95,7 +95,7 @@ MUTATIONS = [
     ),
     Mutation(
         "the parse guard is removed",
-        "src/cli.py",
+        "margin/cli.py",
         "    try:\n"
         "        content_type, data = detect_content_type(raw_text)\n"
         "    except Exception as exc:\n"
@@ -108,7 +108,7 @@ MUTATIONS = [
     ),
     Mutation(
         "the compression guard is removed",
-        "src/cli.py",
+        "margin/cli.py",
         "    try:\n"
         "        text, notes = compress_json(data, original_text=raw_text, store=backing)\n"
         "    except Exception as exc:\n"
@@ -121,7 +121,7 @@ MUTATIONS = [
     ),
     Mutation(
         "compress.py loses its entry point entirely",
-        "src/compress.py",
+        "margin/compress.py",
         'if __name__ == "__main__":',
         'if False:',
         "compress.py entry point",
@@ -129,7 +129,7 @@ MUTATIONS = [
     # Format-level, so guarded by property_test.py rather than cli_test.py.
     Mutation(
         "dictionary encoding is switched off",
-        "src/table.py",
+        "margin/table.py",
         "    dictionaries = dictionary_columns(varying_rows)",
         "    dictionaries = {}",
         "MUST_DICTIONARY",
@@ -137,7 +137,7 @@ MUTATIONS = [
     ),
     Mutation(
         "the #dict line is written but the cells are never indexed",
-        "src/table.py",
+        "margin/table.py",
         "    varying_rows = remove_dictionaries(varying_rows, dictionaries)",
         "    varying_rows = varying_rows",
         "MUST_DICTIONARY",
@@ -145,7 +145,7 @@ MUTATIONS = [
     ),
     Mutation(
         "a dictionary merges values Python calls equal (0 with 0.0)",
-        "src/table.py",
+        "margin/table.py",
         "        if not any(_same_value(value, seen) for seen in distinct):",
         "        if not any(value == seen for seen in distinct):",
         "MUST_DICTIONARY",
@@ -156,7 +156,7 @@ MUTATIONS = [
     # check that must go red rather than "the suite fails".
     Mutation(
         "the store is switched off: nothing is ever stashed",
-        "src/store.py",
+        "margin/store.py",
         "            if gain < min_saving:\n"
         "                continue",
         "            if True:\n"
@@ -166,7 +166,7 @@ MUTATIONS = [
     ),
     Mutation(
         "cells are stashed but the #store line is never written",
-        "src/compress.py",
+        "margin/compress.py",
         '                table["store"] = doc_id',
         "                pass",
         "MUST_STORE",
@@ -174,7 +174,7 @@ MUTATIONS = [
     ),
     Mutation(
         "the store commits even when the document is abandoned",
-        "src/compress.py",
+        "margin/compress.py",
         "    if pending and final is text:",
         "    if pending:",
         "abandoned document left content behind",
@@ -182,7 +182,7 @@ MUTATIONS = [
     ),
     Mutation(
         "a document decompresses without the store its values live in",
-        "src/decompress.py",
+        "margin/decompress.py",
         "        if store is None:",
         "        if False:",
         "MUST_STORE (decompressed without its store)",
@@ -190,7 +190,7 @@ MUTATIONS = [
     ),
     Mutation(
         "the index keeps entries the document never references",
-        "src/store.py",
+        "margin/store.py",
         "def orphaned_ids(index, used_ids):",
         "def orphaned_ids(index, used_ids):\n    return []",
         "completeness detectors do not detect",
@@ -198,7 +198,7 @@ MUTATIONS = [
     ),
     Mutation(
         "a missing object in the store is reported as fine",
-        "src/store.py",
+        "margin/store.py",
         "    return sorted(cell_id for cell_id, name in index.items() if not store.has(name))",
         "    return []",
         "completeness detectors do not detect",
@@ -206,7 +206,7 @@ MUTATIONS = [
     ),
     Mutation(
         "stored objects are read back in text mode (CRLF becomes LF)",
-        "src/store.py",
+        "margin/store.py",
         '            with open(path, "rb") as handle:\n'
         "                if handle.read() != data:",
         '            with open(path, encoding="utf-8") as handle:\n'
@@ -220,7 +220,7 @@ MUTATIONS = [
     # so each one gets a mutation pointed at the named check that guards it.
     Mutation(
         "gc marks from one index instead of every index in docs/",
-        "src/store.py",
+        "margin/store.py",
         "    for doc_id in store.document_ids():\n"
         "        reachable.update(store.read_index(doc_id).values())",
         "    for doc_id in store.document_ids()[:1]:\n"
@@ -230,7 +230,7 @@ MUTATIONS = [
     ),
     Mutation(
         "the leak detector reports nothing, so gc has nothing to sweep",
-        "src/store.py",
+        "margin/store.py",
         "    return sorted(set(store.object_names()) - reachable_objects(store))",
         "    return []",
         "the leak detector does not detect",
@@ -238,7 +238,7 @@ MUTATIONS = [
     ),
     Mutation(
         "fsck stops noticing content that changed under it",
-        "src/store.py",
+        "margin/store.py",
         "            except ValueError:\n"
         '                broken.append((doc_id, cell_id, name, "content changed"))',
         "            except ValueError:\n"
@@ -248,7 +248,7 @@ MUTATIONS = [
     ),
     Mutation(
         "a bundle carries the index but not the objects",
-        "src/store.py",
+        "margin/store.py",
         '           "objects": {name: store.get(name) for name in sorted(set(index.values()))}}',
         '           "objects": {}}',
         "a bundle does not resolve in another store",
@@ -256,7 +256,7 @@ MUTATIONS = [
     ),
     Mutation(
         "import writes the objects and never the index",
-        "src/store.py",
+        "margin/store.py",
         "    commit(store, doc_id, pending)\n    return doc_id, len(by_hash)",
         "    for text in pending.values():\n        store.put(text)\n"
         "    return doc_id, len(by_hash)",
@@ -267,7 +267,7 @@ MUTATIONS = [
     # codes before they are anything else (Rule 11).
     Mutation(
         "gc deletes without being asked to",
-        "src/store_commands.py",
+        "margin/store_commands.py",
         "    if not delete:",
         "    if False:",
         "gc: without --delete it removes nothing",
@@ -284,7 +284,7 @@ MUTATIONS = [
     # legend that still names the column and no longer says what it is not.
     Mutation(
         "the #keyed legend stops saying _key is not a field",
-        "src/render.py",
+        "margin/render.py",
         '            "holds the key each record was stored under, and is NOT a field of "\n'
         '            "the record"',
         '            "holds each record\'s key"',
@@ -294,7 +294,7 @@ MUTATIONS = [
     # The MCP server. A third process boundary, so a third gate.
     Mutation(
         "the batch fetch quietly returns only the first id",
-        "src/mcp_server.py",
+        "margin/mcp_server.py",
         "    for cell_id in ids:",
         "    for cell_id in ids[:1]:",
         "a batch is not just the first id",
@@ -302,7 +302,7 @@ MUTATIONS = [
     ),
     Mutation(
         "the response cap is removed",
-        "src/mcp_server.py",
+        "margin/mcp_server.py",
         "        if cost > remaining:",
         "        if False:",
         "over-cap batch defers",
@@ -310,7 +310,7 @@ MUTATIONS = [
     ),
     Mutation(
         "a missing object is returned as an empty value",
-        "src/mcp_server.py",
+        "margin/mcp_server.py",
         '            parts.append(f"[{key}] MISSING from the store'
         ' — the content is gone, not empty")',
         '            parts.append(f"[{key}]\\n")',
@@ -319,7 +319,7 @@ MUTATIONS = [
     ),
     Mutation(
         "query returns the whole value instead of the matching spans",
-        "src/mcp_server.py",
+        "margin/mcp_server.py",
         '            content = "\\n…\\n".join(spans)',
         "            content = content",
         "returns the matching span",
@@ -327,7 +327,7 @@ MUTATIONS = [
     ),
     Mutation(
         "an oversized value is deferred instead of truncated (a fetch loop)",
-        "src/mcp_server.py",
+        "margin/mcp_server.py",
         "            if spent:",
         "            if True:",
         "larger than the cap returns a labelled first part",
@@ -335,23 +335,117 @@ MUTATIONS = [
     ),
     Mutation(
         "the document id is not normalised, so the quoted form fails",
-        "src/mcp_server.py",
+        "margin/mcp_server.py",
         "    document = document.strip().strip('\"').strip()",
         "    pass",
         "accepted with the quotes",
         gate="mcp_test.py",
     ),
+    # "bin/margin loses its symlink-resolution loop" was here until 2026-10-12.
+    # RETIRED with the file, not moved, and the distinction matters: that loop
+    # was logic of ours, so breaking it on purpose proved a check could notice.
+    # A pip console script is generated by the build backend and resolved by
+    # pip, so there is nothing of ours left here to break. The property it
+    # guarded — the command works from a directory that is not the repo — is
+    # checked in src/package_test.py against an installed wheel, which is the
+    # only place it can now be true or false.
+    # The four below target PACKAGING, and all four name package_test.py —
+    # nothing else in this repo can see them. Each is a failure that would reach
+    # a user as a broken `pip install margin` while all eight older gates stayed
+    # green (Rule 17).
+    # Written at Task 4, SURVIVED, withheld, and now landing with the UI — the
+    # commit that made package_test.py's index.html check unconditional. While
+    # that check was conditional this mutation passed, because the gate printed
+    # a dash and asked nothing. Both halves had to arrive together or one of
+    # them was decoration (Rule 14).
     Mutation(
-        "bin/margin loses its symlink-resolution loop",
-        "bin/margin",
-        'while [ -L "$src" ]; do\n'
-        '  dir=$(cd -P "$(dirname "$src")" && pwd)\n'
-        "  src=$(readlink \"$src\")\n"
-        "  # A relative link is relative to the directory holding the link, not to $PWD.\n"
-        '  [[ $src != /* ]] && src="$dir/$src"\n'
-        "done",
-        ":",
-        "resolved the symlink",
+        "the wheel stops shipping the UI's only file",
+        "pyproject.toml",
+        '[tool.hatch.build.targets.wheel]\npackages = ["margin"]',
+        '[tool.hatch.build.targets.wheel]\npackages = ["margin"]\n'
+        'exclude = ["margin/web/*"]',
+        "index.html is in the wheel",
+        gate="package_test.py",
+    ),
+    Mutation(
+        "the page stops warning about keys it dropped",
+        "margin/web.py",
+        '        if note.startswith("dropped "):',
+        "        if False:",
+        "it names the keys the lossy stage took",
+        gate="web_test.py",
+    ),
+    Mutation(
+        "the body cap is removed",
+        "margin/web.py",
+        "        if length > MAX_BODY_BYTES:",
+        "        if False:",
+        "a body over the cap",
+        gate="web_test.py",
+    ),
+    Mutation(
+        "a taken port raises instead of falling back",
+        "margin/web.py",
+        "    except OSError:",
+        "    except NotImplementedError:",
+        "a taken port falls back",
+        gate="web_test.py",
+    ),
+    Mutation(
+        "the page's compressor is replaced by a second implementation",
+        "margin/web.py",
+        "        document, notes = compress_json(data, original_text=text)",
+        "        document, notes = (json.dumps(data), [])",
+        "byte-identical to the library's",
+        gate="web_test.py",
+    ),
+    Mutation(
+        "the drop report is put back on the unchanged path, where it is false",
+        "margin/compress.py",
+        "            return original_text, notes + [",
+        "            return original_text, lost + notes + [",
+        "DROP REPORTING",
+        gate="property_test.py",
+    ),
+    Mutation(
+        "the drop stage stops reporting what it took",
+        "margin/compress.py",
+        "    dropped = set()\n    stripped = strip_boilerplate(data, dropped=dropped)",
+        "    dropped = set()\n    stripped = strip_boilerplate(data)",
+        "DROP REPORTING",
+        gate="property_test.py",
+    ),
+    Mutation(
+        "margin mcp is treated as a filename again",
+        "margin/cli.py",
+        '    if argv and argv[0] in LAZY_COMMANDS:',
+        '    if False:',
+        "margin mcp answers an initialize",
+        gate="package_test.py",
+    ),
+    Mutation(
+        "a bare-name import survives the package move",
+        "margin/cli.py",
+        "from .detect import detect_content_type",
+        "from detect import detect_content_type",
+        "the installed command compresses",
+        gate="package_test.py",
+    ),
+    Mutation(
+        "the console script points at nothing",
+        "pyproject.toml",
+        'margin = "margin.cli:main"',
+        'margin = "margin.cli:nonexistent_entry"',
+        "margin --help exits 0",
+        gate="package_test.py",
+    ),
+    Mutation(
+        "google-genai goes back into the runtime dependencies",
+        "pyproject.toml",
+        '  "mcp==2.2.0",\n]',
+        '  "mcp==2.2.0",\n  "google-genai==2.22.0",\n]',
+        "google-genai did not ship",
+        gate="package_test.py",
     ),
 ]
 
@@ -366,9 +460,16 @@ def surviving(mutation):
     cannot answer for a source file we just rewrote.
     """
     with tempfile.TemporaryDirectory() as tree:
-        for directory in ("src", "bin"):
+        for directory in ("src", "margin"):
             shutil.copytree(os.path.join(REPO, directory), os.path.join(tree, directory),
                             ignore=shutil.ignore_patterns("__pycache__"))
+        # Files, not directories, and package_test.py cannot build without them:
+        # three of the packaging mutations target pyproject.toml and hatchling
+        # reads README.md for `readme = `. Without these the mutations would
+        # report "anchor text not found" — which this file treats as a loud
+        # failure rather than a skip, correct but for the wrong reason.
+        for name in ("pyproject.toml", "README.md"):
+            shutil.copy2(os.path.join(REPO, name), os.path.join(tree, name))
 
         target = os.path.join(tree, mutation.path)
         source = open(target, encoding="utf-8").read()
@@ -380,8 +481,17 @@ def surviving(mutation):
         with open(target, "w", encoding="utf-8") as f:
             f.write(source.replace(mutation.old, mutation.new, 1))
 
+        # PYTHONPATH at the SCRATCH tree, which is the whole point of the copy.
+        # The gates import the product as `margin.*`, and requirements.txt
+        # installs this project editable — so without this the subprocess would
+        # import the WORKING TREE's margin/ and every mutation above would be
+        # applied to a copy nothing ever executes. They would all report
+        # SURVIVED, and a mutation tester that cannot reach its targets is the
+        # exact failure this file exists to prevent (Rule 13).
+        env = dict(os.environ)
+        env["PYTHONPATH"] = tree
         done = subprocess.run([sys.executable, os.path.join(tree, "src", mutation.gate)],
-                              capture_output=True, text=True, check=False)
+                              capture_output=True, text=True, check=False, env=env)
 
         if done.returncode == 0:
             return f"{mutation.gate} passed — nothing noticed"
@@ -414,12 +524,21 @@ def baseline_passes(gates):
     "caught" while cli_test.py sat green — the same hole, one gate along.
     """
     with tempfile.TemporaryDirectory() as tree:
-        for directory in ("src", "bin"):
+        for directory in ("src", "margin"):
             shutil.copytree(os.path.join(REPO, directory), os.path.join(tree, directory),
                             ignore=shutil.ignore_patterns("__pycache__"))
+        # Files, not directories, and package_test.py cannot build without them:
+        # three of the packaging mutations target pyproject.toml and hatchling
+        # reads README.md for `readme = `. Without these the mutations would
+        # report "anchor text not found" — which this file treats as a loud
+        # failure rather than a skip, correct but for the wrong reason.
+        for name in ("pyproject.toml", "README.md"):
+            shutil.copy2(os.path.join(REPO, name), os.path.join(tree, name))
+        env = dict(os.environ)
+        env["PYTHONPATH"] = tree          # same reason as apply_mutation's copy
         for gate in sorted(gates):
             done = subprocess.run([sys.executable, os.path.join(tree, "src", gate)],
-                                  capture_output=True, text=True, check=False)
+                                  capture_output=True, text=True, check=False, env=env)
             if done.returncode != 0:
                 return False, f"{gate}:\n{done.stdout}"
     return True, ""

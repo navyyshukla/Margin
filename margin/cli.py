@@ -41,13 +41,34 @@ Usage:
 import signal
 import sys
 
-import render
-import store as store_module
-import store_commands
-from compress import compress_json, token_count
-from detect import detect_content_type
+from . import render
+from . import store as store_module
+from . import store_commands
+from .compress import compress_json, token_count
+from .detect import detect_content_type
 
-USAGE = ("usage: margin [-q] [--store] [<file.json>|-]   (with no path, reads stdin)")
+USAGE = ("usage: margin [-q] [--store] [<file.json>|-]   (with no path, reads stdin)\n"
+         "       margin fsck | gc | export | import | mcp | web")
+
+# Subcommands whose module is imported only when the word is actually used.
+#
+# Lazy on purpose: `import mcp` pulls a dependency tree that the everyday
+# `curl ... | margin | pbcopy` has no use for, and that pipeline is what this
+# CLI is shaped around. Measure before moving this to a module-level import.
+#
+# `mcp` is here because packaging took its old entry point away. A client used
+# to be pointed at a path inside the repo; after `pip install margin` there is
+# no such path — the code is inside a tool venv nobody can predict. That is the
+# bar the four store subcommands cleared and `--decompress` did not: refusing
+# this costs the feature, not keystrokes (docs/cli.md).
+#
+# It inherits the cost that document states, and not hypothetically: the first
+# run of this check did `margin mcp` with the venv's bin/ as its working
+# directory, where the mcp package installs a console script literally named
+# `mcp` — so margin read its own subcommand as a filename, found a shell
+# script, and passed it through as not-JSON. `margin ./mcp` and `margin < mcp`
+# still reach the file.
+LAZY_COMMANDS = {"mcp": "margin.mcp_server", "web": "margin.web"}
 
 # --store is OFF by default, and that is the whole design of this flag.
 #
@@ -199,6 +220,23 @@ def main(argv=None):
             # Same promise as the compress path: a subcommand reports what broke
             # on stderr rather than printing a traceback over the user's
             # terminal. 1, not 2 — it was called correctly and failed.
+            print(f"margin: {argv[0]} failed ({type(exc).__name__}: {exc})",
+                  file=sys.stderr)
+            return 1
+
+    if argv and argv[0] in LAZY_COMMANDS:
+        import importlib
+
+        try:
+            importlib.import_module(LAZY_COMMANDS[argv[0]]).main()
+            return 0
+        except BrokenPipeError:
+            raise
+        except Exception as exc:                       # noqa: BLE001
+            # Same promise as the compress path and the store subcommands:
+            # report what broke on one line of stderr rather than printing a
+            # traceback over the user's terminal. 1, not 2 — it was called
+            # correctly and failed.
             print(f"margin: {argv[0]} failed ({type(exc).__name__}: {exc})",
                   file=sys.stderr)
             return 1
