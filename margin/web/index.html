@@ -39,7 +39,7 @@
   h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .02em; }
   header span { color: var(--dim); font-size: 13px; }
   main { flex: 1; display: grid; grid-template-columns: 1fr 1fr; min-height: 0; }
-  section { display: flex; flex-direction: column; min-width: 0; }
+  section { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   section + section { border-left: 1px solid var(--line); }
   label {
     font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
@@ -52,7 +52,16 @@
   }
   textarea:focus { outline: none; }
   textarea::placeholder { color: var(--dim); }
-  footer { border-top: 1px solid var(--line); padding: 12px 16px; }
+  /* Its own background and a stacking context. Without them the panes above
+     paint through it: the dropped-keys line can run to two or three wrapped
+     lines on a payload like GitHub's (20 keys), the footer grows, and the
+     textarea behind it showed through the text. Found by looking at the page
+     with a real payload in it, which no gate here can do. */
+  footer {
+    border-top: 1px solid var(--line); padding: 12px 16px;
+    background: var(--bg); position: relative; z-index: 1;
+    flex: 0 0 auto; max-height: 40vh; overflow-y: auto;
+  }
   .row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
   .count { font: 13px var(--mono); color: var(--dim); }
   .bar {
@@ -75,7 +84,12 @@
   button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
   button:disabled { opacity: .4; cursor: default; }
   .note { color: var(--dim); font-size: 13px; margin-top: 8px; }
-  .warn { color: var(--warn); font-size: 13px; margin-top: 8px; }
+  /* The keys come from the payload and there can be twenty of them, so this
+     wraps and breaks rather than running off the edge. */
+  .warn {
+    color: var(--warn); font-size: 13px; margin-top: 8px;
+    overflow-wrap: anywhere;
+  }
   .warn code { font-family: var(--mono); }
   @media (max-width: 720px) {
     main { grid-template-columns: 1fr; }
