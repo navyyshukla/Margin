@@ -21,11 +21,11 @@ Usage: margin data/samples/some_response.json > compressed.txt
 import json
 import sys
 
-import render
-import store as store_module
-from decompress import decompress
-from tokens import token_count
-from table import MIN_ROWS_TO_TABULATE, build_table, find_record_array, same_json
+from . import render
+from . import store as store_module
+from .decompress import decompress
+from .tokens import token_count
+from .table import MIN_ROWS_TO_TABULATE, build_table, find_record_array, same_json
 
 NOISE_KEYS = {"node_id", "gravatar_id"}
 
@@ -46,25 +46,42 @@ COMPACT = (",", ":")
 # padding in the output. Compact everywhere, and the thresholds re-derived.
 
 
-def strip_boilerplate(data, drop_bare_url=None):
+def strip_boilerplate(data, drop_bare_url=None, dropped=None):
     """Recursively drop link-template and opaque-ID keys from dicts/lists.
 
     drop_bare_url is decided once for the whole document and passed down; see
     uses_url_template_convention for why it is not decided per object.
+
+    `dropped`, when a set is passed, collects the key NAMES removed — not the
+    values, which is the point. This stage is the one irreversible thing in the
+    pipeline, and the names are what a caller needs in order to say what is
+    gone. Nothing reported them until 2026-10-12: the CLI was silent and
+    docs/shapes.md carried the warning instead, which held while everyone who
+    reached this code had read a doc to get here. `margin web` puts a Copy
+    button under the output for someone who has not.
+
+    Default None, not an empty set: a mutable default would accumulate across
+    calls, and the second payload of a process would inherit the first one's
+    keys.
     """
     if drop_bare_url is None:
         drop_bare_url = uses_url_template_convention(data)
 
+    def keep(k):
+        return (not k.endswith("_url")
+                and k not in NOISE_KEYS
+                and not (k == "url" and drop_bare_url))
+
     if isinstance(data, dict):
+        if dropped is not None:
+            dropped.update(k for k in data if not keep(k))
         return {
-            k: strip_boilerplate(v, drop_bare_url)
+            k: strip_boilerplate(v, drop_bare_url, dropped)
             for k, v in data.items()
-            if not k.endswith("_url")
-            and k not in NOISE_KEYS
-            and not (k == "url" and drop_bare_url)
+            if keep(k)
         }
     if isinstance(data, list):
-        return [strip_boilerplate(v, drop_bare_url) for v in data]
+        return [strip_boilerplate(v, drop_bare_url, dropped) for v in data]
     return data
 
 
@@ -167,14 +184,39 @@ def compress_json(data, original_text=None, store=None):
     format would ship looking green. The harness fails on a round-trip note for
     exactly that reason.
     """
-    stripped = strip_boilerplate(data)
+    dropped = set()
+    stripped = strip_boilerplate(data, dropped=dropped)
     as_json = json.dumps(stripped, separators=COMPACT)
+
+    # Prepended to every return path whose output actually went through the
+    # stripper — which is every path EXCEPT the one that hands back
+    # `original_text`. That exception is the whole subtlety, and the first
+    # version of this comment got it backwards: it claimed "the input it returns
+    # is the STRIPPED input", and it is not. `original_text` is the payload
+    # exactly as it arrived, keys and all.
+    #
+    # So reporting a drop there says "these keys are gone" over output that
+    # still contains them — the honesty feature lying, in the worse of the two
+    # directions, under `margin web`'s Copy button. Found by review 2026-10-13.
+    #
+    # Reaching that path takes a payload where the compact re-serialisation
+    # costs MORE than the original, which non-ASCII does: json.dumps escapes
+    # CJK to \\uXXXX, so the "compressed" form is longer and we correctly hand
+    # back what we were given. None of the eight samples is shaped that way,
+    # which is why no measurement caught it; property_test now asks directly.
+    #
+    # Sorted, so the same payload produces the same note twice in a row; a set's
+    # iteration order would make the line move for no reason.
+    lost = ([f"dropped {len(dropped)} key(s) not recoverable: "
+             f"{', '.join(sorted(dropped))}"] if dropped else [])
 
     def result(text, notes):
         """Never hand back something longer than what we were given."""
         if original_text is not None and token_count(text) >= token_count(original_text):
-            return original_text, notes + ["no improvement — returned the input unchanged"]
-        return text, notes
+            # No `lost` here: the bytes going back still carry those keys.
+            return original_text, notes + [
+                "no improvement — returned the input unchanged"]
+        return text, lost + notes
 
     rows, array_path, key_column = find_record_array(stripped)
     if rows is None:
@@ -252,6 +294,9 @@ def compress_json(data, original_text=None, store=None):
             store_module.commit(store, doc_id, pending)
         except Exception as exc:
             return result(as_json, [f"store write failed ({type(exc).__name__}: {exc})"])
+    # `notes` already carries `lost`: the success path reached here through
+    # result(text, []) above, which prepends it. Prepending again printed the
+    # line twice, which is what the check caught on the first run.
     return final, notes
 
 
@@ -262,24 +307,24 @@ if __name__ == "__main__":
     # write a document" that could drift — the same mistake Rule 4 records for
     # encode_cell and decode_cell, one layer up.
     #
-    # runpy, not `import cli; cli.main()`, and the difference is the point. The
-    # first version called main() but not die_on_broken_pipe(), so
+    # Reached as `python -m margin.compress`. It calls cli.main() rather than
+    # reimplementing anything, for the reason the first version got wrong: that
+    # one called main() but not die_on_broken_pipe(), so
     # `python src/compress.py f.json | head -1` still printed the exact
-    # traceback the change was written to remove — a second entry point is a
-    # second place to forget a line, which is the whole failure being fixed.
-    # Running cli.py *as __main__* means it does everything it does for
-    # `margin`, and there is no list of setup steps to keep in sync.
+    # traceback the change was written to remove. A second entry point is a
+    # second place to forget a line, so both lines are here and the list is two
+    # long.
     #
-    # It does NOT stop this file being loaded twice — an earlier version of this
-    # comment claimed it did, and `python -X importtime src/compress.py` says
-    # otherwise: this file stays registered as `__main__`, so cli.py's
-    # `from compress import ...` executes the body again under the name
-    # `compress`, giving two `_ENCODING` globals and two token_count caches.
-    # Only the `compress` copy is ever used, so it costs one extra import and
-    # nothing else. Recorded rather than quietly dropped, because a false
-    # invariant in a comment is worse than an unstated one (Rule 5).
-    import os
-    import runpy
+    # runpy.run_path was what did this until 2026-10-12, and packaging ended it:
+    # run_path on a module inside a package executes the file with no package
+    # context, so every `from .table import ...` in cli.py would fail. -m
+    # imports this module properly, which also retires the double-load this
+    # comment used to record — there is no second copy of the body under another
+    # name now, because `from .compress import ...` finds the one already in
+    # sys.modules.
+    import sys
 
-    runpy.run_path(os.path.join(os.path.dirname(os.path.abspath(__file__)), "cli.py"),
-                   run_name="__main__")
+    from .cli import die_on_broken_pipe, main
+
+    die_on_broken_pipe()
+    sys.exit(main())

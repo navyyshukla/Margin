@@ -10,7 +10,7 @@ about prompts and not about answers.
 It is non-deterministic, it needs a network, and it costs money. Each of those on
 its own is a reason a gate gets bypassed, and a bypassed gate reports green while
 guarding nothing (Rule 12). So it lives with src/measure_*.py — "nothing runs
-them but you" — and no hook calls it. The seven gates still answer "is the
+them but you" — and no hook calls it. The other gates still answer "is the
 document correct?"; this answers "is the document *readable*?", which is a
 different question and deserves a different cadence.
 
@@ -58,13 +58,13 @@ import sys
 import tempfile
 import time
 
-import mcp_server
-import render
-import store as store_module
-from compress import compress_json
-from detect import detect_content_type
-from table import same_json
-from tokens import token_count
+from margin import mcp_server
+from margin import render
+from margin import store as store_module
+from margin.compress import compress_json
+from margin.detect import detect_content_type
+from margin.table import same_json
+from margin.tokens import token_count
 
 # --- what answers, what judges -------------------------------------------
 
@@ -727,7 +727,7 @@ FETCH_SCRIPT = '''#!/usr/bin/env python
 import argparse, os, sys
 sys.path.insert(0, {src!r})
 os.environ["MARGIN_STORE"] = {store!r}
-import mcp_server
+from margin import mcp_server
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--document", required=True)

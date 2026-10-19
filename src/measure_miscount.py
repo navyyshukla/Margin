@@ -96,11 +96,11 @@ import sys
 
 import checks_github_issues as checks
 import eval_model
-import render
-import store as store_module
-from compress import compress_json
-from table import same_json
-from tokens import token_count
+from margin import render
+from margin import store as store_module
+from margin.compress import compress_json
+from margin.table import same_json
+from margin.tokens import token_count
 
 SAMPLE = "data/samples/github_issues.json"
 

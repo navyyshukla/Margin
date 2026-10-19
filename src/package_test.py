@@ -1,0 +1,307 @@
+"""Does the thing a stranger installs actually work?
+
+Every other gate here runs inside the repo, against src/ and margin/, with a
+.venv built by hand. Every one of them can pass while the shipped artifact is
+broken, because these failures only exist after a build:
+
+  - margin/web/index.html missing from the wheel -> `margin web` serves a 404
+  - a bare-name import survived the package move -> ModuleNotFoundError: table
+  - [project.scripts] misdeclared            -> margin: command not found
+  - google-genai left in the runtime deps    -> a Gemini SDK to compress JSON
+
+That is the same class as the failure docs/cli.md records twice — four green
+gates that had never seen an argument, a stream or an exit code (Rule 11) —
+one layer further out. So this builds a real wheel, installs it into a venv
+with no path back into this repo, and drives the installed command.
+
+Rule 15: test the implementation that ships. An in-repo import is not it.
+
+No sample payload — the payloads are inline — so this runs in CI on every
+push, which means it runs on Linux while this is developed on macOS. That is
+where the platform assumptions get caught.
+
+Run: python src/package_test.py
+"""
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import zipfile
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Three records, enough to clear MIN_ROWS_TO_TABULATE, with a constant column so
+# the document exercises #const rather than only the header. The constant column
+# is not decoration: without it three records of two short keys save 3.8%, below
+# MIN_TABLE_SAVING, and `margin` correctly returns the input unchanged — which
+# would make the check below fail for a reason that is not a packaging bug.
+# Measured 2026-10-12: this payload saves 17.9%.
+#
+# Inline because data/samples/ is gitignored and this gate has to run in CI.
+PAYLOAD = json.dumps([
+    {"id": 1, "state": "open", "title": "first"},
+    {"id": 2, "state": "open", "title": "second"},
+    {"id": 3, "state": "open", "title": "third"},
+])
+
+failures = []
+
+
+def _clean_env():
+    """The environment an installed `margin` would really run in.
+
+    PYTHONPATH is stripped, and that single line is the difference between this
+    gate testing a wheel and this gate testing the repo. PYTHONPATH comes before
+    site-packages in sys.path, and every documented invocation of this file sets
+    it — so an inherited environment points the installed command straight back
+    at the working tree.
+
+    Stripped rather than overwritten with "": an empty PYTHONPATH still puts the
+    current directory on sys.path in some shells' hands, and the honest request
+    here is "no PYTHONPATH at all", which is what a user has.
+    """
+    return {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+
+
+def check(name, ok, detail=""):
+    print(f"  {'PASS' if ok else 'FAIL'}  {name}")
+    if not ok:
+        if detail:
+            print(f"        {detail}")
+        failures.append(name)
+    return ok
+
+
+def build_wheel(into):
+    """Build a real wheel. Returns its path, or raises with the build output."""
+    done = subprocess.run(["uv", "build", "--wheel", "--out-dir", into],
+                          cwd=REPO, capture_output=True, text=True, check=False)
+    if done.returncode != 0:
+        raise RuntimeError(f"uv build failed:\n{done.stdout}\n{done.stderr}")
+    wheels = [f for f in os.listdir(into) if f.endswith(".whl")]
+    if len(wheels) != 1:
+        raise RuntimeError(f"expected exactly one wheel, got {wheels}")
+    return os.path.join(into, wheels[0])
+
+
+def install(wheel, venv):
+    """A venv with the wheel in it and NOTHING else.
+
+    No --system-site-packages, no requirements.txt, no path back into REPO: if
+    the wheel does not carry a file, the installed command will not find it.
+    That is the entire question this gate asks.
+    """
+    subprocess.run(["uv", "venv", venv, "--python", "3.12"],
+                   capture_output=True, text=True, check=True)
+    done = subprocess.run(["uv", "pip", "install", "--python", venv, wheel],
+                          capture_output=True, text=True, check=False)
+    if done.returncode != 0:
+        raise RuntimeError(f"install failed:\n{done.stdout}\n{done.stderr}")
+    return os.path.join(venv, "bin", "margin")
+
+
+def run(margin, args, stdin=None, cwd=None):
+    """The installed command, from a directory that is not the repo.
+
+    cwd defaults to the venv's own bin directory on purpose. `margin` has to
+    work from anywhere, which is the one property bin/margin's four retired
+    cli_test checks were testing — see the comment where they used to be.
+    """
+    done = subprocess.run([margin, *args],
+                          input=stdin.encode() if stdin else None,
+                          capture_output=True, cwd=cwd or os.path.dirname(margin),
+                          check=False, env=_clean_env())
+    return done.returncode, done.stdout, done.stderr
+
+
+def main():
+    print("packaged install\n")
+    with tempfile.TemporaryDirectory() as tmp:
+        dist = os.path.join(tmp, "dist")
+        os.makedirs(dist)
+        try:
+            wheel = build_wheel(dist)
+        except RuntimeError as exc:
+            check("the wheel builds", False, str(exc))
+            return 1
+        check("the wheel builds", True)
+
+        # The one check that needs no install: is the HTML actually in there?
+        # A wheel is a zip, and asking it directly names the missing file
+        # instead of leaving `margin web` to serve a 404 later.
+        with zipfile.ZipFile(wheel) as z:
+            names = z.namelist()
+        held = len([n for n in names if n.startswith("margin/")])
+        # Unconditional, and it was conditional for exactly as long as the file
+        # did not exist. While it was, the mutation written for it — a wheel
+        # built with margin/web excluded — SURVIVED, because the gate printed a
+        # dash instead of asking. That is the whole case against a check that
+        # cannot fail (Rule 14), and it is why the mutation and this line landed
+        # in the same commit.
+        check("margin/web/index.html is in the wheel",
+              "margin/web/index.html" in names,
+              f"wheel holds {held} margin/ files")
+
+        try:
+            margin = install(wheel, os.path.join(tmp, "venv"))
+        except (RuntimeError, subprocess.CalledProcessError) as exc:
+            check("the wheel installs into a clean venv", False, str(exc))
+            return 1
+        check("the wheel installs into a clean venv", True)
+        check("the console script exists", os.path.exists(margin), margin)
+
+        # FIRST, because every check below it is a lie if this one fails.
+        #
+        # PYTHONPATH beats site-packages in sys.path, and every documented way
+        # of running this gate sets it: the harness skill says
+        # `PYTHONPATH="$PWD" .venv/bin/python src/<gate>.py`, pre-commit exports
+        # the scratch tree, gates.yml sets the workspace, and mutation_test sets
+        # the mutated tree. So a child that inherits the environment imports the
+        # REPO's margin/ and this gate grades the repo it was supposed to be
+        # standing outside of — the one thing it exists not to do (Rule 17).
+        #
+        # Found by review, 2026-10-13, after the gate had been green for a day:
+        # the mutation that excludes margin/web from the wheel still passed
+        # `margin web serves its page`, because the server was importing the
+        # working tree and finding index.html there.
+        py = os.path.join(os.path.dirname(margin), "python")
+        done = subprocess.run([py, "-c", "import margin; print(margin.__file__)"],
+                              capture_output=True, text=True, check=False,
+                              cwd=os.path.dirname(margin), env=_clean_env())
+        resolved = done.stdout.strip()
+        check("the installed command imports the WHEEL, not this repo",
+              resolved.startswith(tmp) and not resolved.startswith(REPO),
+              f"margin resolved to {resolved!r}, wanted something under {tmp!r}")
+
+        code, out, err = run(margin, ["--help"])
+        check("margin --help exits 0 from outside the repo",
+              code == 0 and b"usage: margin" in out,
+              f"exit {code}, stderr={err[:200]!r}")
+
+        code, out, err = run(margin, ["-"], stdin=PAYLOAD)
+        check("the installed command compresses",
+              code == 0 and out.startswith(b"#margin/v1"),
+              f"exit {code}, stdout={out[:120]!r}, stderr={err[:200]!r}")
+
+        # Rule 1's shape: a document is not proof the pipeline ran unless it
+        # comes back. Round-trip through the INSTALLED package, not this repo's
+        # — the import is the thing under test here as much as the document is.
+        py = os.path.join(os.path.dirname(margin), "python")
+        done = subprocess.run(
+            [py, "-c",
+             "import sys, json\n"
+             "from margin.decompress import decompress\n"
+             "from margin.table import same_json\n"
+             "print(same_json(decompress(sys.stdin.read()), json.loads(sys.argv[1])))",
+             PAYLOAD],
+            input=out.decode(), capture_output=True, text=True, check=False,
+            cwd=os.path.dirname(margin), env=_clean_env())
+        check("the document round-trips inside the installed package",
+              done.stdout.strip() == "True",
+              f"stdout={done.stdout!r} stderr={done.stderr[-300:]!r}")
+
+        # google-genai must not have come along, and `uv pip list` in that venv
+        # is the only honest way to ask — pyproject.toml saying so is the claim,
+        # not the evidence (Rule 3).
+        done = subprocess.run(["uv", "pip", "list", "--python",
+                               os.path.join(tmp, "venv"), "--format", "json"],
+                              capture_output=True, text=True, check=False)
+        installed = {p["name"].lower() for p in json.loads(done.stdout or "[]")}
+        check("google-genai did not ship", "google-genai" not in installed,
+              f"installed: {sorted(installed)}")
+        check("tiktoken and mcp did ship", {"tiktoken", "mcp"} <= installed,
+              f"installed: {sorted(installed)}")
+
+        # `margin web` out of the installed wheel, which is the only place the
+        # question "does the UI ship" can be answered. The zip check above
+        # proves the file is in the archive; this proves the installed server
+        # can find it on disk and serve it. They are not the same claim — PAGE
+        # is built from margin/__file__, and a wheel that lands the file
+        # somewhere else satisfies the first and fails this.
+        #
+        # Port 0 is not an option here: `margin web` picks its own. So it is
+        # started, polled for the line it prints, and killed.
+        import re
+        import time
+        import urllib.error
+        import urllib.request
+
+        web = subprocess.Popen([margin, "web"], stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE,
+                               cwd=os.path.dirname(margin),
+                               env=dict(_clean_env(), BROWSER="true"))
+        try:
+            url = None
+            deadline = time.time() + 30
+            while time.time() < deadline:
+                line = web.stderr.readline().decode()
+                found = re.search(r"http://127\.0\.0\.1:\d+", line)
+                if found:
+                    url = found.group(0)
+                    break
+                if web.poll() is not None:
+                    break
+            if url is None:
+                check("margin web serves its page from the installed wheel",
+                      False, f"no URL on stderr; exit={web.poll()}")
+            else:
+                # Wrapped, and src/web_test.py:get() carries the same note for
+                # the same reason: an HTTPError out of urlopen aborts main()
+                # with a traceback and prints NO failure line, so mutation_test
+                # — which demands the check named for a behaviour be the one
+                # that fails — reports SURVIVED while the bug is live. The
+                # missing-page path returns 500, which is exactly an HTTPError.
+                try:
+                    with urllib.request.urlopen(url + "/", timeout=30) as r:
+                        status, page = r.status, r.read()
+                except urllib.error.HTTPError as exc:
+                    status, page = exc.code, exc.read()
+                check("margin web serves its page from the installed wheel",
+                      status == 200 and b"<title>margin</title>" in page,
+                      f"status={status} {page[:160]!r} from {url}")
+        finally:
+            web.kill()
+            web.wait(timeout=30)
+
+        # JSON-RPC over a pipe, against the INSTALLED server. src/mcp_test.py
+        # already drives the protocol in depth; what this asks is narrower and
+        # only answerable here — that `margin mcp` is reachable at all once the
+        # code lives inside a tool venv whose path nobody can predict. Before
+        # packaging, a client was pointed at a path in this repo; there is no
+        # such path now.
+        #
+        # 2025-06-18 is the version src/mcp_test.py speaks; keeping one number
+        # in two files would be two numbers eventually.
+        hello = json.dumps({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                       "clientInfo": {"name": "package_test", "version": "0"}},
+        }) + "\n"
+        done = subprocess.run([margin, "mcp"], input=hello.encode(),
+                              capture_output=True, timeout=60,
+                              cwd=os.path.dirname(margin), check=False,
+                              env=_clean_env())
+        check("margin mcp answers an initialize over stdio",
+              b'"result"' in done.stdout,
+              f"stdout={done.stdout[:200]!r} stderr={done.stderr[:300]!r}")
+
+        # 0 or 1 both mean it ran: fsck exits 1 when content a document needs is
+        # gone, and a store that does not exist yet is not a failure of fsck.
+        # What this rules out is 2 (called wrong) and a traceback.
+        code, out, err = run(margin, ["fsck"])
+        check("margin fsck runs from the installed command",
+              code in (0, 1) and b"Traceback" not in err,
+              f"exit {code}, stderr={err[:200]!r}")
+
+    print()
+    if failures:
+        print(f"{len(failures)} check(s) failed: {', '.join(failures)}")
+        return 1
+    print("all packaged-install checks pass")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

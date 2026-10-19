@@ -1,17 +1,26 @@
 # The harness, and the rule each part enforces
 
-Seven gates and sixteen rules. Each rule exists because something got past the
+Ten gates and seventeen rules. Each rule exists because something got past the
 gates before it, and each is written down with the failure that bought it — a
 rule whose reason is forgotten is a rule someone deletes.
+
+This header said "Seven gates and sixteen rules" until 2026-10-13, over a table
+missing three of them — including, by then, Rule 17's own gate, appended to this
+file in the commit that left the count alone. Found by review. It is Rule 5 about
+this document: a count is a measurement, and the file that holds the rule is not
+exempt from it.
 
 | Gate | Asks | Sample payload? | Runs |
 |---|---|---|---|
 | `src/property_test.py` | Does the format survive shapes nobody wrote down? | no — generates its own | edit + commit |
 | `src/cli_test.py` | Does the tool keep the promises the tool makes? | no — generates its own | edit + commit |
 | `src/mcp_test.py` | Does the fetch tool resolve what the document promises? | no — builds its own | edit + commit |
+| `src/web_test.py` | Does the page agree with the CLI, at the HTTP boundary? | no — inline | edit + commit |
+| `src/package_test.py` | Does the thing a stranger installs actually work? | no — inline | **commit only** |
 | `src/eval_harness.py` | Do the answers survive on the payloads I have? | yes | edit + commit |
+| `src/eval_model.py --self-test` | Can the eval's verdict still refuse? | no — pure functions | edit + commit |
 | `src/mutation_test.py` | Can the other gates still fail? | no — mutates the source | **commit only** |
-| `.claude/hooks/run_eval.sh` | Did Claude's last edit break any of them? | no | every `src/*.py` edit |
+| `.claude/hooks/run_eval.sh` | Did Claude's last edit break any of them? | no | every `margin/*.py` or `src/*.py` edit |
 | `.githooks/pre-commit` | Is this commit allowed to exist? | no | every commit |
 
 The two cadences are 17.0s and about 62s (measured 2026-09-11, ±10% run to run).
@@ -470,3 +479,53 @@ objects, so no gate in this repo has ever seen the document the way a reader doe
 `docs/status.md` PR #7 is that measurement, and it is deliberately a script rather
 than a gate: non-deterministic, network-dependent and billed, which are three
 different ways for a gate to get bypassed (Rule 12).
+
+## Rule 17 — a gate that runs inside the repo cannot see the thing you ship
+
+Added 2026-10-12, when the product was packaged and `pip install margin` became
+the way in.
+
+All eight gates ran against `src/` with a hand-built `.venv`, and every one of
+them could pass while the shipped artifact was broken: a wheel missing the UI's
+only file, a surviving bare-name import, a dead console script, a dev dependency
+riding along into a user's environment. None of those failures exists until a
+build happens, so no amount of in-repo testing can reach them.
+
+It is **Rule 11 one layer out** — the everyday invocation is a test case — with
+"everyday" meaning what a stranger does, not what the author does. The gate
+(`src/package_test.py`) builds a real wheel, installs it into a venv with no path
+back into the repo, and drives the installed command from a directory that is not
+the repo. That last part is also where `bin/margin`'s four retired `cli_test`
+checks went: "the command works from somewhere else" stopped being a property of
+our code and became a property of an install, so it moved to the only place it
+can now be true or false.
+
+**Two corollaries, both bought the hard way on the day this rule was written.**
+
+**A path variable cannot fix what cwd decides.** Every gate subprocess needs
+`PYTHONPATH` pinned to the tree under test — otherwise `import margin` resolves
+through site-packages, and `requirements.txt` installs this project *editable*,
+so a gate run out of `pre-commit`'s scratch checkout would grade the working tree
+while the commit went in unchecked. That much was anticipated. What was not:
+`python -m pkg.mod` prepends the **current working directory** to `sys.path`,
+*ahead* of everything `PYTHONPATH` names. `mutation_test.py` runs each gate from
+the real repo, so the gates imported the real `margin/` out of the scratch tree
+and **14 of 30 mutations came back SURVIVED** on the first run after the move.
+Both gates now pin `cwd` as well. Rule 12's shape, at the import layer.
+
+**Two artefacts of one file are two claims.** `package_test.py` lists the wheel's
+zip entries to prove `margin/web/index.html` shipped, and separately starts
+`margin web` from the installed venv and fetches the page. Those are not the same
+assertion: `web.PAGE` is built from `margin.__file__`, so a wheel that lands the
+file at a different path satisfies the first check and fails the second. The
+first was written and looked sufficient; the second found nothing, which is the
+only reason we know it would have.
+
+**And the conditional-check trap, which is Rule 14 wearing packaging clothes.**
+The mutation for "the wheel stops shipping the UI's only file" was written before
+the UI existed, while the check it targets was conditional on the file being
+there. It ran, and it **SURVIVED** — the gate printed a dash and asked nothing.
+The mutation was right and the gate was blind. It was withheld rather than
+committed against a green-but-blind check, and landed in the same commit that
+made the check unconditional. A check that cannot fail yet does not get a
+mutation yet; it gets a dated comment naming the commit that will fix both.

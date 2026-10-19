@@ -32,11 +32,11 @@ import subprocess
 import sys
 import tempfile
 
-import render
-from compress import compress_json, strip_boilerplate
-from decompress import decompress
+from margin import render
+from margin.compress import compress_json, strip_boilerplate
+from margin.decompress import decompress
 from property_test import repeated
-from table import same_json
+from margin.table import same_json
 
 # Relative to THIS file, never to the repo. .githooks/pre-commit runs the
 # STAGED tree out of a scratch directory (git checkout-index) precisely so it
@@ -46,8 +46,17 @@ from table import same_json
 # reason: it is the interpreter running this file, not a guess at where a venv
 # lives.
 SRC = os.path.dirname(os.path.abspath(__file__))
-CLI = os.path.join(SRC, "cli.py")
-WRAPPER = os.path.join(os.path.dirname(SRC), "bin", "margin")
+REPO = os.path.dirname(SRC)
+# `python -m margin.cli`, not a path to cli.py. Since 2026-10-12 the product is
+# a package, and running one of its files directly executes it with no package
+# context, so every `from .table import ...` inside it fails.
+#
+# REPO is what goes on PYTHONPATH (see _env): the subprocess must import the
+# tree THIS FILE was copied into, not whatever `margin` happens to be installed
+# on the machine. That is the same reasoning as the paragraph above, one import
+# layer out — a gate that resolves the product through site-packages grades
+# software that is not the software being committed.
+CLI = ["-m", "margin.cli"]
 
 failures = []
 
@@ -56,6 +65,33 @@ def check(name, condition, detail=""):
     print(f"  {'PASS' if condition else 'FAIL'}  {name}")
     if not condition:
         failures.append(f"{name}{': ' + detail if detail else ''}")
+
+
+def _env(extra=None):
+    """PYTHONPATH pinned to this gate's own tree, plus whatever a check adds.
+
+    Every subprocess in this file goes through here. Without it the child
+    imports an INSTALLED margin — requirements.txt installs the project
+    editable, so that copy points at the working tree — and a gate run out of
+    pre-commit's scratch directory would grade the working tree while the commit
+    went in unchecked. Rule 12, one import layer out from where the comment on
+    SRC already records it.
+    """
+    env = dict(os.environ)
+    env["PYTHONPATH"] = REPO
+    if extra:
+        env.update(extra)
+    return env
+
+
+# Every subprocess below also runs with cwd=REPO, and PYTHONPATH alone is not
+# enough without it. `python -m pkg.mod` prepends the CURRENT WORKING DIRECTORY
+# to sys.path, ahead of everything PYTHONPATH names — so a gate run out of
+# mutation_test.py's scratch tree, from the real repo's directory, imported the
+# real repo's margin/ and every mutation aimed at the product SURVIVED. Fourteen
+# of thirty did, on the first run after the package move. Rule 12: the gate has
+# to resolve the code it is grading, and here that is decided by cwd, not by a
+# path variable.
 
 
 def run(args, stdin=b""):
@@ -68,7 +104,8 @@ def run(args, stdin=b""):
     decoder that normalises newlines.
     """
     done = subprocess.run(
-        [sys.executable, CLI, *args], input=stdin, capture_output=True, check=False
+        [sys.executable, *CLI, *args], input=stdin, capture_output=True,
+        check=False, env=_env(), cwd=REPO
     )
     return done.returncode, done.stdout, done.stderr
 
@@ -270,7 +307,7 @@ def main():
         reader = subprocess.Popen(["head", "-1"], stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE)
         writer = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=reader.stdin,
-                                  stderr=subprocess.PIPE)
+                                  stderr=subprocess.PIPE, env=_env(), cwd=REPO)
         reader.stdin.close()
         try:
             writer.stdin.write(PIPE_FILLING.encode())
@@ -292,7 +329,7 @@ def main():
           len(pipe_doc.encode()) > PIPE_BUFFER,
           f"document is {len(pipe_doc.encode())}B — the two checks below prove nothing")
 
-    code, first_line, pipe_err = through_head([sys.executable, CLI])
+    code, first_line, pipe_err = through_head([sys.executable, *CLI])
     # Assert the SIGNAL, not just the absence of a traceback. "No traceback" is
     # also true of a run where the pipe was never closed under the writer, which
     # is exactly what happened while this check used a 665-byte document: it fit
@@ -314,8 +351,10 @@ def main():
     # review, and it is the third instance of the same mistake in this file:
     # an assertion aimed near the claim rather than at it (Rules 3, 12).
     # So: capture what reached the reader and demand the format marker.
-    compress_py = os.path.join(SRC, "compress.py")
-    legacy_code, legacy_out, legacy_err = through_head([sys.executable, compress_py])
+    # `-m margin.compress`, for the reason CLI above gives: a file inside a
+    # package cannot be run as a path.
+    compress_py = ["-m", "margin.compress"]
+    legacy_code, legacy_out, legacy_err = through_head([sys.executable, *compress_py])
     # Three conditions, and each one caught a different real defect: the marker
     # caught a compress.py whose __main__ had been deleted entirely (a silent
     # no-op has no traceback either), the traceback condition is the original
@@ -364,67 +403,22 @@ def main():
               code == 0 and out8 == payload and b"passed through unchanged" in err9,
               f"exit={code} out={len(out8)}B of {len(payload)}B stderr={err9[-120:]!r}")
 
-    # ---- the wrapper -------------------------------------------------------
-    # bin/margin holds real logic — symlink resolution and the venv path — and
-    # is the only file here that is not Python.
+    # ---- the wrapper, and where its coverage went ---------------------------
+    # Four bin/margin checks lived here until 2026-10-12. They are not replaced
+    # in this file, and that is the honest accounting rather than a gap.
     #
-    # The no-venv branch is not a skip, and that is deliberate. pre-commit runs
-    # this file out of a scratch checkout of the index, which by construction
-    # has no .venv, so a skip would mean the launcher is gated by the Claude
-    # hook alone and never at commit time. A missing venv has a defined correct
-    # behaviour — exit 2 saying which venv and how to make it — so check that
-    # instead. Same branch a fresh clone takes, now covered rather than waved
-    # through.
-    # realpath, not abspath. bin/margin resolves its repo with `cd -P`, which
-    # resolves symlinks, so on macOS it reports /private/var/... where abspath
-    # gives /var/... — and the assertion below passed only because one is a
-    # substring of the other. A check that holds by coincidence of this
-    # platform's naming is not a check.
-    repo = os.path.realpath(os.path.dirname(SRC))
-    venv_python = os.path.join(repo, ".venv", "bin", "python")
-    if not os.path.exists(WRAPPER):
-        check("bin/margin exists", False, f"not at {WRAPPER}")
-    elif not os.access(venv_python, os.X_OK):
-        # Checking exit 2 and "uv venv" here was not enough, and the review
-        # caught it: neither depends on the symlink loop, so deleting that loop
-        # outright left this printing "all CLI checks pass" — in the one branch
-        # pre-commit can ever reach. Rule 12 written, then violated in the fix
-        # for Rule 12.
-        #
-        # A wrapper that fails to resolve its own symlink computes the wrong
-        # repo, so it names the wrong .venv. Invoking through a link from an
-        # unrelated directory and demanding the message name THIS repo's venv
-        # exercises the resolution without needing a venv to exist — the error
-        # path carries the evidence.
-        with tempfile.TemporaryDirectory() as elsewhere:
-            link = os.path.join(elsewhere, "margin")
-            os.symlink(WRAPPER, link)
-            done = subprocess.run([link], input=TABULATES.encode(), cwd=elsewhere,
-                                  capture_output=True, check=False)
-        check("bin/margin without a .venv: exit 2, and it resolved the symlink "
-              "to name the right repo",
-              done.returncode == 2 and b"uv venv" in done.stderr
-              and os.path.join(repo, ".venv").encode() in done.stderr,
-              f"exit={done.returncode} stderr={done.stderr!r}")
-    else:
-        done = subprocess.run([WRAPPER], input=TABULATES.encode(),
-                              capture_output=True, check=False)
-        check("bin/margin: finds the repo from its own path and compresses",
-              done.returncode == 0 and done.stdout == out,
-              f"exit={done.returncode} stderr={done.stderr[-200:]!r}")
-
-        # Through a symlink, from an unrelated directory — which is the only
-        # way it is ever actually invoked once installed in ~/.local/bin. The
-        # dirname of the symlink says nothing about where the repo is, so this
-        # is what the resolution loop exists for.
-        with tempfile.TemporaryDirectory() as elsewhere:
-            link = os.path.join(elsewhere, "margin")
-            os.symlink(WRAPPER, link)
-            done = subprocess.run([link], input=TABULATES.encode(), cwd=elsewhere,
-                                  capture_output=True, check=False)
-            check("bin/margin: works through a symlink from another directory",
-                  done.returncode == 0 and done.stdout == out,
-                  f"exit={done.returncode} stderr={done.stderr[-200:]!r}")
+    # They tested that the launcher resolved its own repo through a symlink from
+    # an unrelated directory, and named the right .venv when there was none —
+    # logic that was ours to get wrong, which is why it needed a gate. A pip
+    # console script is not ours: setuptools/hatchling generates it and the
+    # resolution is pip's. There is nothing here left to break on purpose, which
+    # is also why mutation_test.py's "bin/margin loses its symlink-resolution
+    # loop" retired with the file rather than moving.
+    #
+    # What survives of the property — "the command works from a directory that
+    # is not the repo" — moved to src/package_test.py, which installs a built
+    # wheel into a throwaway venv and runs `margin` from outside this tree. That
+    # is the only place the property can be true or false now.
 
     # --- the store subcommands ------------------------------------------
     #
@@ -437,9 +431,9 @@ def main():
     # time it is wrong.
     with tempfile.TemporaryDirectory() as store_root, \
             tempfile.TemporaryDirectory() as other_root:
-        env = dict(os.environ, MARGIN_STORE=store_root)
-        done = subprocess.run([sys.executable, CLI, "--store", "-"],
-                              input=BULKY.encode(), env=env,
+        env = _env({"MARGIN_STORE": store_root})
+        done = subprocess.run([sys.executable, *CLI, "--store", "-"],
+                              input=BULKY.encode(), env=env, cwd=REPO,
                               capture_output=True, check=False)
         document = done.stdout.decode()
 
@@ -458,7 +452,7 @@ def main():
 
         doc_id = stored_line[0][len("#store"):].strip().strip('"') if stored_line else ""
 
-        done = subprocess.run([sys.executable, CLI, "fsck"], env=env,
+        done = subprocess.run([sys.executable, *CLI, "fsck"], env=env, cwd=REPO,
                               capture_output=True, check=False)
         check("fsck: a healthy store exits 0 and says clean",
               done.returncode == 0 and b"clean" in done.stdout,
@@ -467,9 +461,9 @@ def main():
         # The quoted form is what a document actually shows, so it is what a
         # caller copies. mcp_server learned this one the same way.
         bundle_path = os.path.join(other_root, "bundle.json")
-        done = subprocess.run([sys.executable, CLI, "export",
+        done = subprocess.run([sys.executable, *CLI, "export",
                                f'"{doc_id}"', bundle_path],
-                              env=env, capture_output=True, check=False)
+                              env=env, cwd=REPO, capture_output=True, check=False)
         check("export: accepts the doc id with the quotes the #store line shows",
               done.returncode == 0 and os.path.exists(bundle_path),
               f"exit={done.returncode} stderr={done.stderr[-160:]!r}")
@@ -482,14 +476,14 @@ def main():
 
         # The whole point of the feature: another store, which has never seen
         # this payload, resolves the document.
-        second = dict(os.environ, MARGIN_STORE=os.path.join(other_root, "store"))
-        done = subprocess.run([sys.executable, CLI, "import", bundle_path],
-                              env=second, capture_output=True, check=False)
+        second = _env({"MARGIN_STORE": os.path.join(other_root, "store")})
+        done = subprocess.run([sys.executable, *CLI, "import", bundle_path],
+                              env=second, cwd=REPO, capture_output=True, check=False)
         check("import: a fresh store takes the bundle",
               done.returncode == 0 and doc_id.encode() in done.stdout,
               f"exit={done.returncode} stderr={done.stderr[-160:]!r}")
 
-        done = subprocess.run([sys.executable, CLI, "fsck"], env=second,
+        done = subprocess.run([sys.executable, *CLI, "fsck"], env=second,
                               capture_output=True, check=False)
         check("import: and the imported store is clean",
               done.returncode == 0 and b"clean" in done.stdout,
@@ -498,7 +492,7 @@ def main():
         # gc, and the reason it is dry by default: this is the only command in
         # the project that destroys anything.
         os.remove(os.path.join(store_root, "docs", doc_id + ".json"))
-        done = subprocess.run([sys.executable, CLI, "gc"], env=env,
+        done = subprocess.run([sys.executable, *CLI, "gc"], env=env, cwd=REPO,
                               capture_output=True, check=False)
         after_dry = len(os.listdir(objects_dir))
         check("gc: without --delete it removes nothing and says so",
@@ -506,21 +500,21 @@ def main():
               and after_dry == n_objects,
               f"exit={done.returncode} objects {n_objects}->{after_dry}")
 
-        done = subprocess.run([sys.executable, CLI, "gc", "--delete"], env=env,
+        done = subprocess.run([sys.executable, *CLI, "gc", "--delete"], env=env, cwd=REPO,
                               capture_output=True, check=False)
         check("gc --delete: sweeps exactly the unreferenced objects",
               done.returncode == 0 and len(os.listdir(objects_dir)) == 0,
               f"exit={done.returncode} left={len(os.listdir(objects_dir))}")
 
-        done = subprocess.run([sys.executable, CLI, "export", "nosuchdoc",
+        done = subprocess.run([sys.executable, *CLI, "export", "nosuchdoc",
                                os.path.join(other_root, "x.json")],
-                              env=env, capture_output=True, check=False)
+                              env=env, cwd=REPO, capture_output=True, check=False)
         check("export: an unknown document fails loudly, with no traceback",
               done.returncode == 1 and b"Traceback" not in done.stderr
               and done.stderr.strip().startswith(b"margin:"),
               f"exit={done.returncode} stderr={done.stderr[-160:]!r}")
 
-        done = subprocess.run([sys.executable, CLI, "fsck", "extra"], env=env,
+        done = subprocess.run([sys.executable, *CLI, "fsck", "extra"], env=env, cwd=REPO,
                               capture_output=True, check=False)
         check("a subcommand called wrong exits 2, like the rest of the CLI",
               done.returncode == 2, f"exit={done.returncode}")

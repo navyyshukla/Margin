@@ -6,9 +6,9 @@ degrading answer quality on a fixed set of test questions. Inspired by Headroom
 
 ## Read these before acting
 
-- **Changing `src/*.py`, `bin/margin`, a test, a threshold or a hook — or merging to `main`?**
-  Load the **`harness` skill** first. It holds the checklist, the merge gate, and the sixteen
-  rules; `docs/harness.md` holds the failure that bought each one.
+- **Changing `margin/*.py`, `src/*.py`, a test, a threshold or a hook — or merging to `main`?**
+  Load the **`harness` skill** first. It holds the checklist, the merge gate, and the
+  rules; `docs/harness.md` holds the failure that bought each one. There are seventeen now.
 - **`docs/README.md`** is the index — which doc answers which question.
 - **`docs/status.md`** is what is done and what is next. Status is deliberately not kept in this
   file: it is re-read every session, so a stale claim here is one the model acts on. That has
@@ -43,44 +43,57 @@ degrading answer quality on a fixed set of test questions. Inspired by Headroom
 
 - This machine's `python3` is PEP-668 locked (uv-managed); use `uv venv .venv` +
   `uv pip install -r requirements.txt`, not plain `pip`, to set up the environment
-- Day-to-day use is `margin` (`curl ... | margin | pbcopy`); the scripts still run directly
-  (after `source .venv/bin/activate`): `python src/<script>.py <args>`
-- Code conventions for `src/*.py` and `bin/margin` live in `.claude/rules/src-python.md`, which
-  loads itself when one of those files is read
+- Day-to-day use is `margin` (`curl ... | margin | pbcopy`). The harness scripts run
+  directly, with `PYTHONPATH` at the repo root: `PYTHONPATH="$PWD" .venv/bin/python
+  src/<script>.py <args>`
+- Code conventions for `margin/*.py` and `src/*.py` live in `.claude/rules/src-python.md`,
+  which loads itself when one of those files is read
 
 ## Layout
 
-- `bin/margin` — the entry point; symlink it into `~/.local/bin` once (see `docs/cli.md`)
-- `src/` — flat, one file per concern, **27 files**. Ten are the product (the pipeline —
-  `compress`, `decompress`, `detect`, `render`, `store`, `table`, `tokens` — plus `cli.py`,
-  `mcp_server.py`, `store_commands.py`); the other seventeen are the harness that guards it —
-  the gates, the eval harness and its per-payload `checks_*.py`, the model-in-the-loop eval,
-  and three measurement scripts. Deliberately not
-  split into `src/` + `tests/`: every benefit of that split is a *packaging* benefit and
-  nothing here is packaged, while the move would rewrite ten harness files — and a mutation
-  tester that stops finding its targets fails green
+- `margin/` — the product, a real package: **12 modules** (the pipeline — `compress`,
+  `decompress`, `detect`, `render`, `store`, `table`, `tokens` — plus `cli.py`,
+  `mcp_server.py`, `store_commands.py`, `web.py` and `__init__.py`), with the UI's single
+  file at `margin/web/index.html`. Packaged 2026-10-12; `bin/margin` is gone, replaced by
+  `[project.scripts]`. The note that used to live here said the `src/` + tests split was
+  "a packaging benefit and nothing here is packaged" — true until packaging became the
+  goal, at which point the benefit had something to be a benefit to
+- `src/` — flat, one file per concern, **19 files**: the harness that guards the product —
+  the gates, the eval harness and its per-payload `checks_*.py`, the model-in-the-loop
+  eval, and three measurement scripts. They did **not** move into the package, and import
+  it as `margin.*`, which is why packaging rewrote ten files rather than twenty-seven.
+  Every gate pins `PYTHONPATH` **and cwd** to the tree it is grading: `python -m pkg.mod`
+  prepends the working directory ahead of `PYTHONPATH`, and getting that wrong left 14 of
+  30 mutations silently surviving — a mutation tester that stops finding its targets
+  fails green
 - `docs/` — see `docs/README.md`
 - `data/samples/` — real JSON payloads used for testing (gitignored by default — see `.gitignore`);
   `scripts/fetch_samples.sh` refetches all eight, and is the only place the source URLs are written
 - `scripts/` — things that are neither product nor gate. One file so far
-- `.github/workflows/gates.yml` — the five sample-free gates, on every push
+- `.github/workflows/gates.yml` — the seven sample-free gates, on every push
+- `pyproject.toml` — the package, its two runtime pins, the `dev` extra and the `margin`
+  console script. **The single dependency list**; `requirements.txt` is now `-e .[dev]`
+  and installs the project editable, because two hand-maintained copies of the same pins
+  is how they diverge
 - `requirements.txt` — kept minimal; add a dependency only when a line of code actually needs it.
   **Pinned exactly** — a floating `tiktoken` would move every token count in `docs/`
 
 ## Harness
 
-Eight gates: `src/property_test.py`, `src/cli_test.py`, `src/mcp_test.py`, `src/mutation_test.py`,
-`src/eval_harness.py`, `src/eval_model.py --self-test`, the `.claude/hooks/run_eval.sh` PostToolUse
-hook, and `.githooks/pre-commit`. What each asks, and
-what you owe before changing the format, is in the `harness` skill.
+Ten gates: `src/property_test.py`, `src/cli_test.py`, `src/mcp_test.py`, `src/web_test.py`,
+`src/package_test.py`, `src/mutation_test.py`, `src/eval_harness.py`,
+`src/eval_model.py --self-test`, the `.claude/hooks/run_eval.sh` PostToolUse hook, and
+`.githooks/pre-commit`. What each asks, and what you owe before changing the format, is in
+the `harness` skill.
 
-They do not all run at the same cadence: an edit to `src/*.py` runs five of them,
-and a commit runs all six. `mutation_test.py` is the commit-only one — the skill's
-table says why.
+They do not all run at the same cadence: an edit to `margin/*.py` or `src/*.py` runs six of
+them, and a commit runs all eight. `mutation_test.py` and `package_test.py` are the
+commit-only ones — the skill's table says why, and both reasons are seconds per edit.
 
-A **push** runs five of them again in GitHub Actions (`.github/workflows/gates.yml`) — the
-five that need no sample payload. `eval_harness.py` is deliberately not among them and the
+A **push** runs seven of them again in GitHub Actions (`.github/workflows/gates.yml`) — the
+seven that need no sample payload. `eval_harness.py` is deliberately not among them and the
 workflow says why; it is not a weaker gate, it is a gate with an input CI does not have.
+`package_test.py` matters most there: CI is Linux and this is developed on macOS.
 
 The one thing you cannot discover from the repo: **run `./.githooks/install.sh` once per clone, and
 again after editing any hook** — hooks are copied into `.git/hooks`, not symlinked, so an edit does

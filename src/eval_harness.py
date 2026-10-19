@@ -40,10 +40,10 @@ Usage: python src/eval_harness.py data/samples/github_issues.json
 import importlib
 import sys
 
-from table import same_json
-from compress import compress_json, strip_boilerplate
-from decompress import decompress
-from detect import detect_content_type
+from margin.table import same_json
+from margin.compress import compress_json, strip_boilerplate
+from margin.decompress import decompress
+from margin.detect import detect_content_type
 
 
 def safe_answer(check, data):

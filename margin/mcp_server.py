@@ -34,8 +34,8 @@ import sys
 
 from mcp.server.mcpserver import MCPServer
 
-import store as store_module
-from tokens import token_count
+from . import store as store_module
+from .tokens import token_count
 
 # Measured 2026-09-10 against every value the sample set actually stores
 # (171 of them, across the three payloads the store helps):

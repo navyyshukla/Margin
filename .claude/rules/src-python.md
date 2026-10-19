@@ -1,13 +1,15 @@
 ---
 paths:
+  - "margin/**/*.py"
   - "src/**/*.py"
-  - "bin/margin"
 ---
 
 # Writing code in this repo
 
-These load only when a file under `src/` or `bin/margin` is read, because that is
-the only time they matter.
+These load only when a file under `margin/` or `src/` is read, because that is the
+only time they matter. `margin/` is the product and `src/` is the harness that
+guards it; `bin/margin` was the third entry here until 2026-10-12, when packaging
+replaced it with a console script.
 
 - **Keep functions small and named for what they compute, not how.** `token_count`,
   not `helper1`.
@@ -16,7 +18,7 @@ the only time they matter.
   from** — measured, not guessed — and its derivation goes in
   `docs/thresholds.md`. Measure against the file as fetched, not `json.dumps`
   output, which pads with `", "` and `": "` that were never on disk.
-- **All input is read in `src/cli.py` and nowhere else.** `compress.py` used to
+- **All input is read in `margin/cli.py` and nowhere else.** `compress.py` used to
   parse argv too, which made `margin` and `python src/compress.py` two
   implementations of one job, free to drift.
 - **Use `table.same_json`, never `==`, to compare JSON.** Python says `True == 1`
@@ -24,7 +26,7 @@ the only time they matter.
   ships. Four places depend on this; any one left on `==` is a hole in the same
   wall.
 - **Where two functions are inverses, they must key off the same source of
-  truth** — which is why the writer and reader both live in `src/render.py`.
+  truth** — which is why the writer and reader both live in `margin/render.py`.
 
 Rule numbers in comments (`Rule 4`, `Rule 9`, …) refer to `docs/harness.md`.
 **46 of them are in these files** — 10 in `cli_test.py` alone — out of 76 across

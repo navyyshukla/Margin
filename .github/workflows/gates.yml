@@ -36,6 +36,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
+    # The product is a package as of 2026-10-12 and the gates import it as
+    # `margin.*`. The venv below installs the project editable, which would also
+    # resolve it; this is explicit so a change to how the venv is built cannot
+    # turn five gates into five ModuleNotFoundErrors.
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+
     steps:
       # Both pinned past Node 20, which the runners now force onto Node 24 with
       # a deprecation annotation on every single run. A warning nobody can fix
@@ -74,6 +81,18 @@ jobs:
       # Does the fetch tool resolve what the document promises? (JSON-RPC over a pipe)
       - name: MCP contract
         run: .venv/bin/python src/mcp_test.py
+
+      # Does the page keep the CLI's promises? (HTTP, on a localhost port)
+      - name: web contract
+        run: .venv/bin/python src/web_test.py
+
+      # Does the thing a stranger installs actually work? Builds a wheel and
+      # installs it into a clean venv with no path back into the checkout.
+      # Here as well as locally because this runner is Linux and development
+      # happens on macOS — a platform assumption in the product is invisible
+      # from the machine that wrote it (Rule 17).
+      - name: packaged install
+        run: .venv/bin/python src/package_test.py
 
       # Can the other gates still fail?
       - name: mutation coverage

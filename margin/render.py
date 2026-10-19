@@ -40,7 +40,7 @@ import csv
 import io
 import json
 
-from table import MISSING
+from .table import MISSING
 
 FORMAT_MARKER = "#margin/v1"
 LEGEND_PREFIX = "#legend "
