@@ -7,16 +7,15 @@
 
 A personal, from-scratch project inspired by [Headroom](https://github.com/headroomlabs-ai/headroom):
 a small tool that shrinks the JSON API responses I paste into LLM conversations, without breaking
-the answers I get back. Built as a learning project — rule-based first, reversible always, one
-feature at a time. See `CLAUDE.md` for the current architecture and decisions.
+the answers I get back. I built it to learn: rule-based first, reversible always, one feature at a
+time. See `CLAUDE.md` for the current architecture and decisions.
 
-**Status: finished** (2026-09-12) — the scope in `CLAUDE.md` is met and measured;
+**Status: finished** (2026-09-12). The scope in `CLAUDE.md` is met and measured, and
 `docs/status.md` says what is done, what stays open and what was declined.
-The JSON compressor works and is tested against eight different APIs.
-**41.6% overall**, and nothing ever comes out larger than it went in. With
-`--store` and the MCP server, **73.7%** — bulk values move to a content store the
-model fetches from, and `docs/store.md` explains what that costs as well as what
-it saves.
+The JSON compressor is tested against eight different APIs. It saves 41.6% overall,
+and nothing ever comes out larger than it went in. With `--store` and the MCP server
+it saves 73.7%, because bulk values move to a content store the model fetches from;
+`docs/store.md` explains what that costs as well as what it saves.
 
 ```bash
 pip install margin
@@ -28,16 +27,16 @@ margin response.json > compressed.txt
 margin web          # a page on 127.0.0.1 that shows what it saved
 ```
 
-With `--store` in use, four subcommands keep that store recoverable — `margin
-fsck`, `margin gc`, `margin export <doc-id> <file>`, `margin import <file>`.
+With `--store` in use, four subcommands keep that store recoverable: `margin fsck`,
+`margin gc`, `margin export <doc-id> <file>` and `margin import <file>`.
 `margin mcp` runs the server a client fetches through, and `margin web` opens the
-page. See `docs/cli.md` for why these earned a place the narrow CLI refused
+page. `docs/cli.md` explains why these earned a place when the narrow CLI refused
 `--decompress`.
 
-Reads a file or stdin. The document goes to stdout and everything else to
+Margin reads a file or stdin. The document goes to stdout and everything else to
 stderr, so it drops into a pipeline without putting notes on your clipboard.
-Exit codes and the edge cases — not JSON, nothing to read, nothing worth
-compressing — are in `docs/cli.md`.
+Exit codes and the edge cases (not JSON, nothing to read, nothing worth
+compressing) are in `docs/cli.md`.
 
 ## What it does
 
@@ -73,66 +72,66 @@ Measured across eight APIs (tokens under `cl100k_base`, against the file as fetc
 `docs/shapes.md` explains what each shape is and why the last two are correct
 outcomes rather than gaps.
 
-Those figures are three stages, and the first one throws data away. Set-wide:
+Those figures come from three stages, and the first one throws data away. Set-wide:
 formatting 12%, dropping link-template keys 29%, the table format 59%. The
-dropping stage fires on exactly one of the eight payloads — GitHub, the only API
-here using the `*_url` convention — where it is the largest single contributor.
+dropping stage fires on exactly one of the eight payloads, GitHub, the only API
+here using the `*_url` convention, and there it is the largest single contributor.
 `docs/shapes.md` has the per-stage table and the list of what is gone for good.
 
 ## The rules it holds itself to
 
 - **Reversible after one deliberate cut.** The first stage *drops* link-template
-  and opaque-ID keys — `*_url`, `node_id`, `gravatar_id` — and nothing restores
+  and opaque-ID keys (`*_url`, `node_id`, `gravatar_id`) and nothing restores
   them, so a compressed GitHub payload cannot answer "link me to issue 37508".
   Everything after that stage is exactly reversible, `decompress(compress(x))` is
   verified at runtime, and a transform that cannot be undone is not shipped past
-  that line. **Since 2026-10-12 it also says what it took** — `dropped 20 key(s)
+  that line. Since 2026-10-12 it also says what it took: `dropped 20 key(s)
   not recoverable: avatar_url, …` on stderr, and one line under the output in
   `margin web`. Nothing reported it before, which was defensible while everyone
   who got here had read a doc first, and is not defensible with a Copy button on
   screen. What goes and what it costs: `docs/shapes.md`.
 - **Never worse.** If nothing helps, the input comes back unchanged.
 - **Answers must not move, and a model was finally asked.** 80 checks assert the
-  dropping stage kept every field a question needs; they cannot see the table
+  dropping stage kept every field a question needs. They cannot see the table
   format, because the round-trip check above them already proved it exact. So
   `src/eval_model.py` puts the documents to a reader that has never seen this
-  repo: **raw 75/75, compressed 75/75, stored 73/75** across eight payloads, and
-  the 16 comprehension questions are judged too — **16/16 on every arm**, by a
+  repo: raw 75/75, compressed 75/75, stored 73/75 across eight payloads. The 16
+  comprehension questions are judged too, and score 16/16 on every arm, by a
   judge that passed 16 of 16 controls including 8 it had to call *different*. The
-  compressed arm is exact — `#keyed`'s `_key` column stopped being reported as
+  compressed arm is exact: `#keyed`'s `_key` column stopped being reported as
   data once the legend said outright that it is not a field. The stored arm's two
   misses are arithmetic on a column that holds no handle, they are the same two
   as the previous run, and the run fails its own bar because of them. The judge
-  shares a model family with the answerer, which is the weaker instrument and is
-  said so in `docs/cold-reads/2026-09-12-judge.md`. `docs/status.md` has the rest,
+  shares a model family with the answerer, which is the weaker instrument, and
+  `docs/cold-reads/2026-09-12-judge.md` says so. `docs/status.md` has the rest,
   including what that leaves unproven.
-- **Readable by a model, not just by a parser.** The document explains its own
+- **Readable by a model as well as a parser.** The document explains its own
   encodings, and that claim is checked by giving it to a model with no access to
   this repo. `docs/cold-reads.md` keeps the running score and is the single
-  source of truth for it — do not keep a count here that can drift from that
-  table. Every one of the first five found a real defect no automated gate
+  source of truth for it, so no count is kept here to drift from that table.
+  Each of the first five reads found a real defect no automated gate
   could see; the reads after them were run to check a fix and found none in the
   document.
-- **Every number measured, never copied.** Including from Headroom, whose
+- **Every number measured, never copied.** That includes Headroom, whose
   thresholds would reject most of the results above (`docs/thresholds.md`).
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `margin/cli.py` | arguments, streams and exit codes — the only place input is read |
+| `margin/cli.py` | arguments, streams and exit codes; the only place input is read |
 | `margin/compress.py` | the pipeline and its thresholds |
 | `margin/table.py` | decides the table's shape; renders no text |
 | `margin/tokens.py` | counting tokens, in one place |
 | `margin/detect.py` | decides whether the input is JSON at all |
 | `margin/render.py` | writes the document and reads it back, in one file so the two cannot drift |
 | `margin/store.py` | the content store: bulk cells live here, not in the prompt |
-| `margin/mcp_server.py` | the `fetch` tool — what makes Margin a tool the model calls |
-| `margin/store_commands.py` | `fsck`, `gc`, `export`, `import` — what keeps the store recoverable |
+| `margin/mcp_server.py` | the `fetch` tool, which makes Margin a tool the model calls |
+| `margin/store_commands.py` | `fsck`, `gc`, `export`, `import`, which keep the store recoverable |
 | `margin/web.py` + `margin/web/index.html` | `margin web`: the page, stdlib only, calling the same `compress_json` the CLI calls |
 | `margin/decompress.py` | the inverse |
 | `src/eval_harness.py` | asks the questions before and after |
-| `src/eval_model.py` | asks a *model* the questions — three arms, and not a gate |
+| `src/eval_model.py` | asks a *model* the questions; three arms, and not a gate |
 | `src/property_test.py` | generates payloads trying to break the format |
 | `src/cli_test.py` | runs the CLI as a subprocess and checks what it promises |
 | `src/mcp_test.py` | drives the MCP server as a subprocess over JSON-RPC |
@@ -140,17 +139,17 @@ here using the `*_url` convention — where it is the largest single contributor
 | `src/package_test.py` | builds a wheel, installs it in a clean venv, runs the installed command |
 | `src/mutation_test.py` | breaks the product on purpose and checks the named gate notices |
 | `src/checks_<payload>.py` | the expected answers for one sample, paired to it by name (eight of them) |
-| `src/measure_*.py` | one-off measurement scripts — not gates, nothing runs them but you (`measure_miscount.py` is the five-arm run that isolated the stored miscount) |
-| `docs/` | the written record — `docs/README.md` is the index of which file answers what |
+| `src/measure_*.py` | one-off measurement scripts; not gates, nothing runs them but you (`measure_miscount.py` is the five-arm run that isolated the stored miscount) |
+| `docs/` | the written record; `docs/README.md` is the index of which file answers what |
 
-Working on it? Run `./.githooks/install.sh` once per clone. `data/samples/` is gitignored — it
-holds real API responses — so `bash scripts/fetch_samples.sh` refetches all
+## Working on it
+
+Run `./.githooks/install.sh` once per clone. `data/samples/` is gitignored because it
+holds real API responses, so `bash scripts/fetch_samples.sh` refetches all
 eight from their original endpoints. They are live, so the shapes come back and
 the digits do not: refetched four days later, seven of the eight compressed to
 the same percentage and `github_issues` moved to 58.7% because they are
 different issues. The frozen figures stay in `docs/shapes.md`.
-
-## Working on it
 
 ```bash
 uv venv .venv && uv pip install -r requirements.txt   # installs the project editable
@@ -158,16 +157,16 @@ bash scripts/fetch_samples.sh                         # the eight payloads
 PYTHONPATH="$PWD" .venv/bin/python src/property_test.py   # and the other nine gates
 ```
 
-Seven of the ten gates need no payload and run on every push — that is the badge
+Seven of the ten gates need no payload and run on every push; that is the badge
 at the top. `src/eval_harness.py` needs the samples and so runs on this machine
-only; `.github/workflows/gates.yml` says why.
+only. `.github/workflows/gates.yml` says why.
 
-`PYTHONPATH` because the gates import the product as `margin.*` and must resolve
-it in the tree being graded, not through whatever is installed — `pre-commit`
+The gates need `PYTHONPATH` because they import the product as `margin.*` and must
+resolve it in the tree being graded, not through whatever is installed. `pre-commit`
 runs them against a scratch checkout of the index, where an installed copy would
 be the wrong code entirely.
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE). It is a finished personal learning project, so
-issues and pull requests are not being taken; fork it freely.
+MIT; see [`LICENSE`](LICENSE). It is a finished personal learning project, so
+issues and pull requests are not being taken. Fork it freely.
